@@ -16,7 +16,7 @@ permissions:
 jobs:
   parse-release-tag:
     name: parse-release-tag
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +87,7 @@ jobs:
 
   prod-actor-guard:
     name: prod-actor-guard
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -125,7 +125,7 @@ jobs:
 
   assert-promoted-image:
     name: assert-promoted-image
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -150,7 +150,7 @@ jobs:
 
   verify-deployment:
     name: verify-deployment
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -209,7 +209,7 @@ jobs:
 
   gitops-writeback:
     name: gitops-writeback
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -258,7 +258,7 @@ jobs:
 
   discord-notify:
     name: discord-notify
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
