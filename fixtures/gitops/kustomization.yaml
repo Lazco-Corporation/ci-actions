@@ -1,0 +1,5 @@
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/lazco/self-test
+    newTag: 0.0.0-0000000

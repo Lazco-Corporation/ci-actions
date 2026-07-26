@@ -1,0 +1,42 @@
+name: "Parse release tag"
+description: "Split a <svc>/<env>-<version> release tag into (service, env, version, sha, image_name) with validation."
+inputs:
+  ref-name:
+    description: "The tag ref (github.ref_name)."
+    required: true
+  commit-sha:
+    description: "Full commit sha (github.sha); the short form tags the image."
+    required: true
+  allowed-services:
+    description: "Comma-separated valid service prefixes (e.g. 'api,collector,billing-worker')."
+    required: true
+  image-prefix:
+    description: "Registry-agnostic image prefix; image name = <prefix>-<svc> (e.g. 'lazco-cloud-backend')."
+    required: true
+outputs:
+  service:
+    description: "Service parsed from the tag."
+    value: ${{ steps.parse.outputs.service }}
+  env:
+    description: "Environment parsed from the tag (staging | prod)."
+    value: ${{ steps.parse.outputs.env }}
+  version:
+    description: "Semver parsed from the tag."
+    value: ${{ steps.parse.outputs.version }}
+  sha:
+    description: "Short (7-char) commit sha."
+    value: ${{ steps.parse.outputs.sha }}
+  image_name:
+    description: "Registry-agnostic image repository name."
+    value: ${{ steps.parse.outputs.image_name }}
+runs:
+  using: "composite"
+  steps:
+    - id: parse
+      shell: bash
+      env:
+        REF_NAME: ${{ inputs.ref-name }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        ALLOWED_SERVICES: ${{ inputs.allowed-services }}
+        IMAGE_PREFIX: ${{ inputs.image-prefix }}
+      run: bash "${{ github.action_path }}/parse-release-tag.sh"

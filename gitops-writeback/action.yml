@@ -1,0 +1,60 @@
+name: "GitOps write-back"
+description: "Pin a new image tag into a cloud-infra-gitops overlay kustomization.yaml and push, with a rebase-retry loop for concurrent release runs."
+inputs:
+  token:
+    description: "PAT with Contents: RW on the gitops repo (GITOPS_PAT)."
+    required: true
+  service:
+    description: "Service directory under apps/ in the gitops repo (e.g. api, frontend)."
+    required: true
+  env-name:
+    description: "Overlay environment (staging | prod)."
+    required: true
+  image-name:
+    description: "Full image name including registry org (<org>/<name>); must match the overlay's image name:."
+    required: true
+  new-tag:
+    description: "Tag to pin (<version>-<sha>)."
+    required: true
+  gitops-repo:
+    description: "owner/repo of the gitops repo."
+    required: false
+    default: "Lazco-Corporation/cloud-infra-gitops"
+  target-branch:
+    description: "Branch to push to."
+    required: false
+    default: "main"
+  overlay-path:
+    description: "Override the derived apps/<svc>/overlays/<env>/kustomization.yaml path (self-test use)."
+    required: false
+    default: ""
+outputs:
+  result:
+    description: "pushed | already-up-to-date"
+    value: ${{ steps.writeback.outputs.result }}
+  commit_sha:
+    description: "Short sha of the pushed write-back commit (only when result=pushed)."
+    value: ${{ steps.writeback.outputs.commit_sha }}
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout gitops repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.gitops-repo }}
+        token: ${{ inputs.token }}
+        ref: ${{ inputs.target-branch }}
+        path: gitops
+
+    - id: writeback
+      shell: bash
+      working-directory: gitops
+      env:
+        SERVICE: ${{ inputs.service }}
+        ENV_NAME: ${{ inputs.env-name }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        NEW_TAG: ${{ inputs.new-tag }}
+        GITOPS_REPO: ${{ inputs.gitops-repo }}
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+        OVERLAY_PATH: ${{ inputs.overlay-path }}
+      run: bash "${{ github.action_path }}/gitops-writeback.sh"

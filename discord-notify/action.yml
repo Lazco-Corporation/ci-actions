@@ -1,0 +1,52 @@
+name: "Discord notify"
+description: "Send the release-failure Discord notification, naming the failed job(s) derived from the needs context."
+inputs:
+  webhooks:
+    description: "Comma-separated Discord webhook URLs (DISCORD_NOTIFICATION_WEBHOOK_URL). Empty = skip."
+    required: false
+    default: ""
+  repo:
+    description: "github.repository."
+    required: true
+  run-id:
+    description: "github.run_id."
+    required: true
+  ref-name:
+    description: "github.ref_name (the release tag)."
+    required: true
+  actor:
+    description: "github.actor."
+    required: true
+  env-name:
+    description: "Parsed release env (staging | prod); may be empty when parse failed."
+    required: false
+    default: ""
+  needs-json:
+    description: "toJSON(needs) of the calling job - used to name the failed job(s)."
+    required: true
+  dry-run:
+    description: "'true' = build and print the payload without sending (self-test use)."
+    required: false
+    default: "false"
+outputs:
+  title:
+    description: "The notification title (useful for tests)."
+    value: ${{ steps.notify.outputs.title }}
+  failed_jobs:
+    description: "Comma-separated failed job names, or 'none'."
+    value: ${{ steps.notify.outputs.failed_jobs }}
+runs:
+  using: "composite"
+  steps:
+    - id: notify
+      shell: bash
+      env:
+        DISCORD_WEBHOOKS: ${{ inputs.webhooks }}
+        REPO: ${{ inputs.repo }}
+        RUN_ID: ${{ inputs.run-id }}
+        REF_NAME: ${{ inputs.ref-name }}
+        ACTOR: ${{ inputs.actor }}
+        ENV_NAME: ${{ inputs.env-name }}
+        NEEDS_JSON: ${{ inputs.needs-json }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: bash "${{ github.action_path }}/discord-notify.sh"

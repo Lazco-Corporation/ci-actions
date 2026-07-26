@@ -1,0 +1,23 @@
+name: "Assert promoted image"
+description: "Assert the exact <version>-<sha> image already exists in the registry (prod never rebuilds; missing = never shipped to staging)."
+inputs:
+  image-ref:
+    description: "Full image reference (<org>/<name>:<version>-<sha>)."
+    required: true
+  retries:
+    description: "Manifest probe attempts."
+    required: false
+    default: "3"
+  retry-delay:
+    description: "Seconds between attempts."
+    required: false
+    default: "3"
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        RETRIES: ${{ inputs.retries }}
+        RETRY_DELAY: ${{ inputs.retry-delay }}
+      run: bash "${{ github.action_path }}/assert-promoted-image.sh"

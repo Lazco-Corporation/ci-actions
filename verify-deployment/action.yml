@@ -1,0 +1,56 @@
+name: "Verify deployment"
+description: "Poll a health endpoint until it serves HTTP 200 with the expected version, then confirm stability (rolling-update flap guard)."
+inputs:
+  service:
+    description: "Service label used in messages (e.g. api, frontend)."
+    required: true
+  env-name:
+    description: "Environment label (staging | prod)."
+    required: true
+  url:
+    description: "Health endpoint URL. Empty = verification is skipped with a notice."
+    required: false
+    default: ""
+  expected-version:
+    description: "Version string the endpoint must report."
+    required: true
+  timeout:
+    description: "Max seconds to wait for a match."
+    required: false
+    default: "300"
+  interval:
+    description: "Seconds between probes."
+    required: false
+    default: "3"
+  version-jq-path:
+    description: "jq path to the version field in the health response."
+    required: false
+    default: ".version"
+  stability-checks:
+    description: "Consecutive matches required after the first match."
+    required: false
+    default: "3"
+  stability-interval:
+    description: "Seconds between stability probes."
+    required: false
+    default: "2"
+outputs:
+  conclusion:
+    description: "verified | skipped | failed"
+    value: ${{ steps.verify.outputs.conclusion }}
+runs:
+  using: "composite"
+  steps:
+    - id: verify
+      shell: bash
+      env:
+        SERVICE: ${{ inputs.service }}
+        ENV_NAME: ${{ inputs.env-name }}
+        CHECK_URL: ${{ inputs.url }}
+        EXPECTED_VERSION: ${{ inputs.expected-version }}
+        TIMEOUT: ${{ inputs.timeout }}
+        INTERVAL: ${{ inputs.interval }}
+        VERSION_JQ_PATH: ${{ inputs.version-jq-path }}
+        STABILITY_CHECKS: ${{ inputs.stability-checks }}
+        STABILITY_INTERVAL: ${{ inputs.stability-interval }}
+      run: bash "${{ github.action_path }}/verify-deployment.sh"

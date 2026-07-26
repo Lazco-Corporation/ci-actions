@@ -1,0 +1,17 @@
+name: "Prod actor guard"
+description: "Fail-closed allow-list check: only actors on PROD_RELEASE_ACTORS may proceed with a prod release tag."
+inputs:
+  actor:
+    description: "github.actor (who pushed the tag)."
+    required: true
+  allowed-actors:
+    description: "Comma-separated allowed GitHub logins (PROD_RELEASE_ACTORS from Infisical)."
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        ACTOR: ${{ inputs.actor }}
+        ALLOWED_ACTORS: ${{ inputs.allowed-actors }}
+      run: bash "${{ github.action_path }}/prod-actor-guard.sh"

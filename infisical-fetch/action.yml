@@ -1,0 +1,88 @@
+# Composite action: fetch CI config from self-hosted Infisical (OIDC).
+#
+# Shared by every tag-driven release pipeline. The calling JOB must declare
+# `permissions: id-token: write` - composite actions cannot declare permissions,
+# and the OIDC token is minted per job.
+#
+# Fetched secrets are exported into $GITHUB_ENV (masked) by
+# Infisical/secrets-action, so every subsequent step in the calling job reads
+# them as `${{ env.<KEY> }}`.
+#
+# `required-keys` is a per-call-site fail-fast list: an empty secret otherwise
+# surfaces steps later as a confusing downstream failure (e.g. an empty
+# GITOPS_PAT failing at the gitops checkout).
+
+name: "Fetch CI secrets from Infisical"
+description: "Export Infisical /ci secrets for the given project/env-slug as masked env vars, with fail-fast required-key validation."
+inputs:
+  project-slug:
+    description: "Infisical project slug (e.g. lazco-cloud-backend)."
+    required: true
+  env-slug:
+    description: "Infisical env-slug to read (staging | prod), parsed from the release tag."
+    required: true
+  identity-id:
+    description: "Infisical machine-identity id for GitHub OIDC auth."
+    required: true
+  domain:
+    description: "Infisical instance domain."
+    required: false
+    default: "https://infisical.lazco.tw"
+  secret-path:
+    description: "Path within the project to read."
+    required: false
+    default: "/ci"
+  required-keys:
+    description: "Comma-separated keys that must be non-empty after the fetch (fail-fast)."
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Validate env-slug
+      shell: bash
+      env:
+        ENV_SLUG: ${{ inputs.env-slug }}
+      run: |
+        set -euo pipefail
+        case "$ENV_SLUG" in
+          staging | prod) ;;
+          *)
+            echo "::error title=Invalid Infisical env-slug::env-slug must be 'staging' or 'prod' (got '${ENV_SLUG}')"
+            exit 1
+            ;;
+        esac
+
+    - name: Fetch secrets from Infisical
+      uses: Infisical/secrets-action@v1.0.9
+      with:
+        method: "oidc"
+        domain: ${{ inputs.domain }}
+        identity-id: ${{ inputs.identity-id }}
+        project-slug: ${{ inputs.project-slug }}
+        env-slug: ${{ inputs.env-slug }}
+        secret-path: ${{ inputs.secret-path }}
+
+    - name: Validate required keys
+      shell: bash
+      env:
+        REQUIRED_KEYS: ${{ inputs.required-keys }}
+        PROJECT_SLUG: ${{ inputs.project-slug }}
+        ENV_SLUG: ${{ inputs.env-slug }}
+        SECRET_PATH: ${{ inputs.secret-path }}
+      run: |
+        set -euo pipefail
+        missing=""
+        for key in $(printf '%s' "$REQUIRED_KEYS" | tr ',' ' '); do
+          if [ -z "${!key:-}" ]; then
+            missing="${missing} ${key}"
+          fi
+        done
+        if [ -n "$missing" ]; then
+          echo "::error title=Missing CI config::keys not set in Infisical (${PROJECT_SLUG} / ${ENV_SLUG} / ${SECRET_PATH}):${missing}"
+          exit 1
+        fi
+        echo "CI config loaded from ${PROJECT_SLUG} / ${ENV_SLUG} / ${SECRET_PATH}"
+        if [ -n "$(printf '%s' "$REQUIRED_KEYS" | xargs)" ]; then
+          echo "required keys present: $(printf '%s' "$REQUIRED_KEYS" | tr ',' ' ' | xargs | tr ' ' ',')"
+        fi

@@ -1,0 +1,309 @@
+# Self-test for the composite actions in this repo. Runs the checked-out commit
+# via local refs (uses: ./<action>), so every change is validated before the v1
+# tag is moved. infisical-fetch is excluded: it needs an Infisical machine
+# identity bound to this repo, which does not exist.
+#
+# Expected-failure cases use continue-on-error + an outcome assertion.
+
+name: Self-test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # gitops-writeback pushes a scratch branch
+
+jobs:
+  parse-release-tag:
+    name: parse-release-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: backend tag parses
+        id: backend
+        uses: ./parse-release-tag
+        with:
+          ref-name: api/prod-0.63.94
+          commit-sha: 0123456789abcdef0123456789abcdef01234567
+          allowed-services: api,collector,billing-worker
+          image-prefix: lazco-cloud-backend
+
+      - name: assert backend outputs
+        run: |
+          set -euo pipefail
+          [ "${{ steps.backend.outputs.service }}" = "api" ]
+          [ "${{ steps.backend.outputs.env }}" = "prod" ]
+          [ "${{ steps.backend.outputs.version }}" = "0.63.94" ]
+          [ "${{ steps.backend.outputs.sha }}" = "0123456" ]
+          [ "${{ steps.backend.outputs.image_name }}" = "lazco-cloud-backend-api" ]
+          echo "backend parse outputs OK"
+
+      - name: frontend tag parses (prefix-only image name)
+        id: frontend
+        uses: ./parse-release-tag
+        with:
+          ref-name: frontend/staging-0.62.94
+          commit-sha: 0123456789abcdef0123456789abcdef01234567
+          allowed-services: frontend
+          image-prefix: lazco-cloud
+
+      - name: assert frontend outputs
+        run: |
+          set -euo pipefail
+          [ "${{ steps.frontend.outputs.env }}" = "staging" ]
+          [ "${{ steps.frontend.outputs.image_name }}" = "lazco-cloud-frontend" ]
+          echo "frontend parse outputs OK"
+
+      - name: unknown service is rejected
+        id: bad_service
+        continue-on-error: true
+        uses: ./parse-release-tag
+        with:
+          ref-name: bogus/prod-1.2.3
+          commit-sha: 0123456789abcdef0123456789abcdef01234567
+          allowed-services: api,collector,billing-worker
+          image-prefix: lazco-cloud-backend
+
+      - name: assert unknown service failed
+        run: |
+          [ "${{ steps.bad_service.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.bad_service.outcome }}'"; exit 1; }
+          echo "unknown service correctly rejected"
+
+      - name: non-semver version is rejected
+        id: bad_version
+        continue-on-error: true
+        uses: ./parse-release-tag
+        with:
+          ref-name: api/prod-latest
+          commit-sha: 0123456789abcdef0123456789abcdef01234567
+          allowed-services: api,collector,billing-worker
+          image-prefix: lazco-cloud-backend
+
+      - name: assert non-semver failed
+        run: |
+          [ "${{ steps.bad_version.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.bad_version.outcome }}'"; exit 1; }
+          echo "non-semver correctly rejected"
+
+  prod-actor-guard:
+    name: prod-actor-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: listed actor passes (case-insensitive)
+        uses: ./prod-actor-guard
+        with:
+          actor: OnCloud
+          allowed-actors: oncloud, someone-else
+
+      - name: unlisted actor is blocked
+        id: denied
+        continue-on-error: true
+        uses: ./prod-actor-guard
+        with:
+          actor: mallory
+          allowed-actors: oncloud, someone-else
+
+      - name: assert unlisted actor failed
+        run: |
+          [ "${{ steps.denied.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.denied.outcome }}'"; exit 1; }
+          echo "unlisted actor correctly blocked"
+
+      - name: empty allow-list fails closed
+        id: empty_list
+        continue-on-error: true
+        uses: ./prod-actor-guard
+        with:
+          actor: oncloud
+          allowed-actors: ""
+
+      - name: assert empty allow-list failed
+        run: |
+          [ "${{ steps.empty_list.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.empty_list.outcome }}'"; exit 1; }
+          echo "empty allow-list correctly failed closed"
+
+  assert-promoted-image:
+    name: assert-promoted-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: existing public image passes
+        uses: ./assert-promoted-image
+        with:
+          image-ref: alpine:latest
+
+      - name: missing image fails after retries
+        id: missing
+        continue-on-error: true
+        uses: ./assert-promoted-image
+        with:
+          image-ref: alpine:this-tag-does-not-exist-ci-actions-selftest
+          retries: "2"
+          retry-delay: "1"
+
+      - name: assert missing image failed
+        run: |
+          [ "${{ steps.missing.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.missing.outcome }}'"; exit 1; }
+          echo "missing image correctly failed"
+
+  verify-deployment:
+    name: verify-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start health stub (matching version)
+        run: STUB_VERSION=1.2.3 PORT=18080 python3 fixtures/health-server.py &
+
+      - name: Start health stub (old version)
+        run: STUB_VERSION=0.0.0 PORT=18081 python3 fixtures/health-server.py &
+
+      - name: matching version verifies
+        id: ok
+        uses: ./verify-deployment
+        with:
+          service: self-test
+          env-name: staging
+          url: http://127.0.0.1:18080/health
+          expected-version: 1.2.3
+          stability-checks: "2"
+          stability-interval: "1"
+
+      - name: assert verified
+        run: |
+          [ "${{ steps.ok.outputs.conclusion }}" = "verified" ] || { echo "::error::expected verified, got '${{ steps.ok.outputs.conclusion }}'"; exit 1; }
+          echo "matching version correctly verified"
+
+      - name: empty URL skips
+        id: skip
+        uses: ./verify-deployment
+        with:
+          service: self-test
+          env-name: staging
+          url: ""
+          expected-version: 1.2.3
+
+      - name: assert skipped
+        run: |
+          [ "${{ steps.skip.outputs.conclusion }}" = "skipped" ] || { echo "::error::expected skipped, got '${{ steps.skip.outputs.conclusion }}'"; exit 1; }
+          echo "empty URL correctly skipped"
+
+      - name: old version times out
+        id: timeout
+        continue-on-error: true
+        uses: ./verify-deployment
+        with:
+          service: self-test
+          env-name: staging
+          url: http://127.0.0.1:18081/health
+          expected-version: 1.2.3
+          timeout: "4"
+          interval: "1"
+
+      - name: assert timeout failed
+        run: |
+          [ "${{ steps.timeout.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.timeout.outcome }}'"; exit 1; }
+          echo "old version correctly timed out"
+
+  gitops-writeback:
+    name: gitops-writeback
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reset the scratch branch to main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push -f origin HEAD:refs/heads/self-test-writeback
+
+      - name: write-back pushes a commit
+        id: first
+        uses: ./gitops-writeback
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          service: self-test
+          env-name: staging
+          image-name: ghcr.io/lazco/self-test
+          new-tag: 9.9.9-selftest
+          gitops-repo: Lazco-Corporation/ci-actions
+          target-branch: self-test-writeback
+          overlay-path: fixtures/gitops/kustomization.yaml
+
+      - name: assert pushed
+        run: |
+          [ "${{ steps.first.outputs.result }}" = "pushed" ] || { echo "::error::expected pushed, got '${{ steps.first.outputs.result }}'"; exit 1; }
+          echo "write-back correctly pushed"
+
+      - name: re-run is a no-op
+        id: second
+        uses: ./gitops-writeback
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          service: self-test
+          env-name: staging
+          image-name: ghcr.io/lazco/self-test
+          new-tag: 9.9.9-selftest
+          gitops-repo: Lazco-Corporation/ci-actions
+          target-branch: self-test-writeback
+          overlay-path: fixtures/gitops/kustomization.yaml
+
+      - name: assert no-op
+        run: |
+          [ "${{ steps.second.outputs.result }}" = "already-up-to-date" ] || { echo "::error::expected already-up-to-date, got '${{ steps.second.outputs.result }}'"; exit 1; }
+          echo "re-run correctly no-op'd"
+
+  discord-notify:
+    name: discord-notify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: guard failure titles the block
+        id: guard_case
+        uses: ./discord-notify
+        with:
+          repo: Lazco-Corporation/ci-actions
+          run-id: "1"
+          ref-name: api/prod-0.63.94
+          actor: mallory
+          env-name: prod
+          needs-json: '{"parse":{"result":"success"},"guard":{"result":"failure"}}'
+          dry-run: "true"
+
+      - name: assert guard title
+        run: |
+          [ "${{ steps.guard_case.outputs.title }}" = "Unauthorized prod release blocked" ] || { echo "::error::unexpected title '${{ steps.guard_case.outputs.title }}'"; exit 1; }
+          echo "guard-block title OK"
+
+      - name: failed jobs are named
+        id: failure_case
+        uses: ./discord-notify
+        with:
+          repo: Lazco-Corporation/ci-actions
+          run-id: "1"
+          ref-name: api/prod-0.63.94
+          actor: oncloud
+          env-name: prod
+          needs-json: '{"parse":{"result":"success"},"guard":{"result":"success"},"check-deployment":{"result":"failure"},"writeback":{"result":"success"}}'
+          dry-run: "true"
+
+      - name: assert failed job naming
+        run: |
+          [ "${{ steps.failure_case.outputs.title }}" = "Release failed: api/prod-0.63.94" ] || { echo "::error::unexpected title '${{ steps.failure_case.outputs.title }}'"; exit 1; }
+          [ "${{ steps.failure_case.outputs.failed_jobs }}" = "check-deployment" ] || { echo "::error::unexpected failed jobs '${{ steps.failure_case.outputs.failed_jobs }}'"; exit 1; }
+          echo "failed-job naming OK"
+
+      - name: empty webhooks skips sending
+        uses: ./discord-notify
+        with:
+          webhooks: ""
+          repo: Lazco-Corporation/ci-actions
+          run-id: "1"
+          ref-name: api/prod-0.63.94
+          actor: oncloud
+          env-name: prod
+          needs-json: '{"parse":{"result":"success"},"guard":{"result":"success"},"writeback":{"result":"failure"}}'
