@@ -31,8 +31,9 @@ Consumers pin the floating major tag:
     expected-version: ${{ needs.parse.outputs.version }}
 ```
 
-The repo is private; org access is granted via Settings > Actions > General >
-Access = "Accessible from repositories in the organization".
+The repo is public, so any Lazco repo can call these actions, public or private.
+A private action repo cannot be called from a public repo, which is why this one
+is public.
 
 Requirements of calling jobs:
 
@@ -131,3 +132,7 @@ SERVICE=api ENV_NAME=staging EXPECTED_VERSION=0.63.94 \
 PACKAGE_DIR=fixtures/npm-package DRY_RUN=true PACKAGE_MANAGER=npm \
   bash npm-publish/npm-publish.sh
 ```
+
+## License
+
+AGPL-3.0-or-later. See [LICENSE](LICENSE).
