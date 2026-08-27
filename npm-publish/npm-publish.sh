@@ -302,23 +302,40 @@ fi
 
 echo "result=published" >> "$GITHUB_OUTPUT"
 
+# Read the dist-tag endpoint, not `npm view`. `npm view` needs the full
+# packument, which is the last thing to propagate after a first publish and can
+# lag for minutes. The dist-tag endpoint is authoritative and updates at once.
+read_dist_tag() {
+  local encoded_name="${pkg_name/\//%2F}"
+  curl -fsS --max-time 15 \
+    "${REGISTRY%/}/-/package/${encoded_name}/dist-tags" 2> /dev/null \
+    | jq -r --arg tag "$DIST_TAG" '.[$tag] // empty' 2> /dev/null || true
+}
+
 verified=false
-for attempt in 1 2 3 4 5; do
-  live_tag="$(npm view "${pkg_name}@${DIST_TAG}" version --registry "$REGISTRY" 2> /dev/null || true)"
+live_tag=""
+delay=3
+for attempt in 1 2 3 4 5 6 7 8; do
+  live_tag="$(read_dist_tag)"
   if [ "$live_tag" = "$pkg_version" ]; then
-    echo "attempt ${attempt}/5: ${DIST_TAG} -> ${pkg_version}"
+    echo "attempt ${attempt}/8: ${DIST_TAG} -> ${pkg_version}"
     verified=true
     break
   fi
-  echo "attempt ${attempt}/5: ${DIST_TAG} -> ${live_tag:-(none)}, waiting for the registry to catch up..."
-  sleep 3
+  echo "attempt ${attempt}/8: ${DIST_TAG} -> ${live_tag:-(none)}, waiting ${delay}s for the registry to catch up..."
+  sleep "$delay"
+  delay=$((delay * 2))
 done
 
+echo "::notice title=npm package published::${pkg_name}@${pkg_version} is live on ${REGISTRY} (${DIST_TAG}, ${file_count} files, ${size_kb} KB)"
+
+# The publish itself succeeded, and npm versions are immutable, so a slow
+# dist-tag read must not fail the job - that would block the release steps that
+# follow for a package that is already on the registry. Warn instead.
 if [ "$verified" != true ]; then
-  fail "npm publish unverified" \
-    "${pkg_name}@${pkg_version} was published but the '${DIST_TAG}' tag still points elsewhere - run 'npm dist-tag add ${pkg_name}@${pkg_version} ${DIST_TAG}' once the registry catches up" \
-    "published, but the \`${DIST_TAG}\` tag did not move"
+  echo "::warning title=npm dist-tag unconfirmed::${pkg_name}@${pkg_version} published, but '${DIST_TAG}' still reads ${live_tag:-(none)} after 8 attempts - the registry is usually just slow. Check with 'npm view ${pkg_name}@${DIST_TAG} version', and only if it is wrong run 'npm dist-tag add ${pkg_name}@${pkg_version} ${DIST_TAG}'"
+  write_summary "published - ${file_count} files, ${size_kb} KB (dist-tag \`${DIST_TAG}\` unconfirmed)"
+  exit 0
 fi
 
-echo "::notice title=npm package published::${pkg_name}@${pkg_version} is live on ${REGISTRY} (${DIST_TAG}, ${file_count} files, ${size_kb} KB)"
 write_summary "published - ${file_count} files, ${size_kb} KB"
