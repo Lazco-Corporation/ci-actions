@@ -1,0 +1,73 @@
+# Composite action: publish an already-built npm package.
+#
+# The caller installs dependencies and builds first; this action only packs,
+# publishes, and verifies. The npm token comes from Infisical /ci (prod) via
+# the infisical-fetch action, so no npm secret lives in GitHub.
+#
+# Provenance is on by default, so the calling JOB must declare
+# `permissions: id-token: write` - composite actions cannot declare permissions.
+
+name: "Publish npm package"
+description: "Publish a built package to an npm registry: version-gate against the release tag, skip if already published, sign with provenance, and verify the version resolves."
+inputs:
+  token:
+    description: "npm automation token with publish rights (NPM_TOKEN from Infisical /ci)."
+    required: true
+  package-dir:
+    description: "Directory holding the package.json to publish."
+    required: false
+    default: "."
+  expected-version:
+    description: "Version the package.json must declare (a leading 'v' is stripped). Empty = trust package.json."
+    required: false
+    default: ""
+  dist-tag:
+    description: "npm dist-tag to move to this version (latest | next | beta ...)."
+    required: false
+    default: "latest"
+  access:
+    description: "npm access level for the published version (public | restricted)."
+    required: false
+    default: "public"
+  provenance:
+    description: "'true' = sign the publish with a provenance attestation (needs id-token: write)."
+    required: false
+    default: "true"
+  registry:
+    description: "Registry to publish to."
+    required: false
+    default: "https://registry.npmjs.org"
+  package-manager:
+    description: "auto | npm | pnpm. 'auto' reads the packageManager field, then the lockfile."
+    required: false
+    default: "auto"
+  dry-run:
+    description: "'true' = pack and validate without publishing (self-test use)."
+    required: false
+    default: "false"
+outputs:
+  result:
+    description: "published | already-published | dry-run"
+    value: ${{ steps.publish.outputs.result }}
+  name:
+    description: "Published package name."
+    value: ${{ steps.publish.outputs.name }}
+  version:
+    description: "Published package version."
+    value: ${{ steps.publish.outputs.version }}
+runs:
+  using: "composite"
+  steps:
+    - id: publish
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.token }}
+        PACKAGE_DIR: ${{ inputs.package-dir }}
+        EXPECTED_VERSION: ${{ inputs.expected-version }}
+        DIST_TAG: ${{ inputs.dist-tag }}
+        ACCESS: ${{ inputs.access }}
+        PROVENANCE: ${{ inputs.provenance }}
+        REGISTRY: ${{ inputs.registry }}
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: bash "${{ github.action_path }}/npm-publish.sh"

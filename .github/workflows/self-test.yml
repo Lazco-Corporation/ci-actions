@@ -256,6 +256,99 @@ jobs:
           [ "${{ steps.second.outputs.result }}" = "already-up-to-date" ] || { echo "::error::expected already-up-to-date, got '${{ steps.second.outputs.result }}'"; exit 1; }
           echo "re-run correctly no-op'd"
 
+  npm-publish:
+    name: npm-publish
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write # provenance path is exercised in dry-run
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: dry run packs and validates
+        id: dry
+        uses: ./npm-publish
+        with:
+          token: ""
+          package-dir: fixtures/npm-package
+          expected-version: v0.0.1
+          package-manager: npm
+          dry-run: "true"
+
+      - name: assert dry run
+        run: |
+          set -euo pipefail
+          [ "${{ steps.dry.outputs.result }}" = "dry-run" ] || { echo "::error::expected dry-run, got '${{ steps.dry.outputs.result }}'"; exit 1; }
+          [ "${{ steps.dry.outputs.name }}" = "@lazco-corporation/ci-actions-selftest" ] || { echo "::error::unexpected name '${{ steps.dry.outputs.name }}'"; exit 1; }
+          [ "${{ steps.dry.outputs.version }}" = "0.0.1" ] || { echo "::error::unexpected version '${{ steps.dry.outputs.version }}'"; exit 1; }
+          echo "dry run outputs OK"
+
+      - name: pnpm packs the same fixture
+        id: dry_pnpm
+        uses: ./npm-publish
+        with:
+          token: ""
+          package-dir: fixtures/npm-package
+          package-manager: pnpm
+          dry-run: "true"
+
+      - name: assert pnpm dry run
+        run: |
+          [ "${{ steps.dry_pnpm.outputs.result }}" = "dry-run" ] || { echo "::error::expected dry-run, got '${{ steps.dry_pnpm.outputs.result }}'"; exit 1; }
+          echo "pnpm pack path OK"
+
+      - name: an already-published version is a no-op
+        id: existing
+        uses: ./npm-publish
+        with:
+          token: ""
+          package-dir: fixtures/npm-package-published
+          package-manager: npm
+          dry-run: "true"
+
+      - name: assert no-op
+        run: |
+          [ "${{ steps.existing.outputs.result }}" = "already-published" ] || { echo "::error::expected already-published, got '${{ steps.existing.outputs.result }}'"; exit 1; }
+          echo "already-published correctly skipped"
+
+      - name: version mismatch is rejected
+        id: mismatch
+        continue-on-error: true
+        uses: ./npm-publish
+        with:
+          token: ""
+          package-dir: fixtures/npm-package
+          expected-version: 9.9.9
+          package-manager: npm
+          dry-run: "true"
+
+      - name: assert version mismatch failed
+        run: |
+          [ "${{ steps.mismatch.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.mismatch.outcome }}'"; exit 1; }
+          echo "version mismatch correctly rejected"
+
+      - name: missing token is rejected outside dry runs
+        id: no_token
+        continue-on-error: true
+        uses: ./npm-publish
+        with:
+          token: ""
+          package-dir: fixtures/npm-package
+          package-manager: npm
+
+      - name: assert missing token failed
+        run: |
+          [ "${{ steps.no_token.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.no_token.outcome }}'"; exit 1; }
+          echo "missing token correctly rejected"
+
   discord-notify:
     name: discord-notify
     runs-on: blacksmith-2vcpu-ubuntu-2404

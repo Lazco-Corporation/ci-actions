@@ -1,0 +1,10 @@
+{
+  "name": "@lazco-corporation/ci-actions-selftest",
+  "version": "0.0.1",
+  "description": "Fixture package for the npm-publish self-test. Never published.",
+  "license": "MIT",
+  "main": "index.js",
+  "files": [
+    "index.js"
+  ]
+}
