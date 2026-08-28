@@ -1,3 +1,14 @@
+> **Start your agent at the workspace root, not here.**
+>
+> This repo lives in `lazco-workspace/repos/`. Shared rules, shared skills, and
+> every openspec spec load only from the workspace root, because the skill
+> search stops at a git repo root and this repo is one.
+>
+> A session started here loads none of them, and nothing warns you.
+>
+> Open the agent in `lazco-workspace/`, then work by path:
+> `git -C repos/<repo> status`.
+
 # AGENTS.md
 
 Shared composite actions for Lazco release pipelines.
