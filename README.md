@@ -136,3 +136,5 @@ PACKAGE_DIR=fixtures/npm-package DRY_RUN=true PACKAGE_MANAGER=npm \
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+<!-- DRIFTPROBE-7391 -->
