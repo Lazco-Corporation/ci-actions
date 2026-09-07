@@ -1,1 +1,4 @@
 __pycache__/
+
+# A worktree is its own git repo. Unignored, git add -A records it as a gitlink.
+/.worktrees
