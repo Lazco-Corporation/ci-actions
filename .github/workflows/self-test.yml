@@ -400,3 +400,67 @@ jobs:
           actor: oncloud
           env-name: prod
           needs-json: '{"parse":{"result":"success"},"guard":{"result":"success"},"writeback":{"result":"failure"}}'
+
+  require-tag-on-main:
+    name: require-tag-on-main
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      # v1.0.0 is an ancestor of main, so compare answers "behind".
+      - name: a commit main contains passes
+        uses: ./require-tag-on-main
+        with:
+          repository: ${{ github.repository }}
+          sha: v1.0.0
+          branch: main
+          ref-name: v1.0.0
+          token: ${{ github.token }}
+
+      # Reversed on purpose: main carries commits v1.0.0 lacks, so compare
+      # answers "ahead", which is the shape of a tag cut off a feature branch.
+      - name: a commit the branch lacks is blocked
+        id: off_branch
+        continue-on-error: true
+        uses: ./require-tag-on-main
+        with:
+          repository: ${{ github.repository }}
+          sha: main
+          branch: v1.0.0
+          ref-name: fake/prod-9.9.9
+          token: ${{ github.token }}
+
+      - name: assert off-branch commit failed
+        run: |
+          [ "${{ steps.off_branch.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.off_branch.outcome }}'"; exit 1; }
+          echo "off-branch commit correctly blocked"
+
+      - name: an unknown commit fails closed
+        id: unknown_sha
+        continue-on-error: true
+        uses: ./require-tag-on-main
+        with:
+          repository: ${{ github.repository }}
+          sha: "0000000000000000000000000000000000000000"
+          branch: main
+          token: ${{ github.token }}
+
+      - name: assert unknown commit failed
+        run: |
+          [ "${{ steps.unknown_sha.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.unknown_sha.outcome }}'"; exit 1; }
+          echo "unknown commit correctly failed closed"
+
+      - name: an empty token fails closed
+        id: no_token
+        continue-on-error: true
+        uses: ./require-tag-on-main
+        with:
+          repository: ${{ github.repository }}
+          sha: main
+          branch: main
+          token: ""
+
+      - name: assert empty token failed
+        run: |
+          [ "${{ steps.no_token.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.no_token.outcome }}'"; exit 1; }
+          echo "empty token correctly failed closed"
