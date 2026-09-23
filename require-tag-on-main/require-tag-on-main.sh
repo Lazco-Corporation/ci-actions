@@ -3,9 +3,11 @@
 # does not contain.
 #
 # A tag can point at any commit, including one that no branch holds. A
-# t4-collector prod tag already did: it named a commit that survived only as a
-# pre-squash PR head, so the pipeline that shipped it was 67 lines behind main.
-# The built artifact matched that time by luck.
+# cloud-backend prod tag already did: it named a rebased duplicate of a change
+# main had carried for three hours, so the pipeline that shipped it ran a
+# release workflow 67 lines behind main. The built artifact matched by luck.
+# Three places could have caught it and none did, because the release script
+# printed the branch instead of checking it.
 #
 # The check reads the compare API, so it needs no checkout and no git history.
 #
