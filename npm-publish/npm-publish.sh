@@ -305,10 +305,21 @@ echo "result=published" >> "$GITHUB_OUTPUT"
 # Read the dist-tag endpoint, not `npm view`. `npm view` needs the full
 # packument, which is the last thing to propagate after a first publish and can
 # lag for minutes. The dist-tag endpoint is authoritative and updates at once.
+#
+# The read carries the publish token. A private package, which is every package
+# on GitHub Packages from a private repo, answers an anonymous read with 401, so
+# without it every attempt reads (none) and the loop spends its whole backoff
+# waiting on a registry that already has the version. The header goes in on
+# stdin through curl's config, so the token never lands in the process list.
 read_dist_tag() {
   local encoded_name="${pkg_name/\//%2F}"
-  curl -fsS --max-time 15 \
-    "${REGISTRY%/}/-/package/${encoded_name}/dist-tags" 2> /dev/null \
+  local auth=""
+  if [ -n "$NPM_TOKEN" ]; then
+    auth="header = \"Authorization: Bearer ${NPM_TOKEN}\""
+  fi
+  printf '%s\n' "$auth" \
+    | curl -fsS --max-time 15 --config - \
+      "${REGISTRY%/}/-/package/${encoded_name}/dist-tags" 2> /dev/null \
     | jq -r --arg tag "$DIST_TAG" '.[$tag] // empty' 2> /dev/null || true
 }
 
