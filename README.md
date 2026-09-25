@@ -11,6 +11,7 @@ runnable locally.
 |---|---|
 | `infisical-fetch` | Export Infisical `/ci` secrets as masked env vars (OIDC), with fail-fast `required-keys` validation |
 | `parse-release-tag` | Split `<svc>/<env>-<version>` into `(service, env, version, sha, image_name)` with validation |
+| `require-tag-on-main` | Fail-closed check that the release branch contains the tagged commit |
 | `prod-actor-guard` | Fail-closed `PROD_RELEASE_ACTORS` allow-list check for prod tags |
 | `assert-promoted-image` | Assert the exact `<version>-<sha>` image exists (prod never rebuilds) |
 | `gitops-writeback` | Pin `newTag` in a `cloud-infra-gitops` overlay and push (rebase-retry loop) |
@@ -35,12 +36,31 @@ The repo is public, so any Lazco repo can call these actions, public or private.
 A private action repo cannot be called from a public repo, which is why this one
 is public.
 
+Every tag-triggered release must call `require-tag-on-main` before it builds or
+ships anything. A tag can point at any commit, including one that no branch
+holds, and neither a branch filter nor `prod-actor-guard` catches that:
+
+```yaml
+- uses: Lazco-Corporation/ci-actions/require-tag-on-main@v1
+  with:
+    repository: ${{ github.repository }}
+    sha: ${{ github.sha }}
+    ref-name: ${{ github.ref_name }}
+    token: ${{ github.token }}
+```
+
+It reads the compare API, so it needs no checkout and no git history. Put it in
+the first job the release depends on.
+
 Requirements of calling jobs:
 
 - Jobs calling `infisical-fetch` must declare `permissions: id-token: write`
   (OIDC tokens are minted per job; composite actions cannot declare permissions).
 - Jobs calling `npm-publish` with the default `provenance: true` need the same
   `permissions: id-token: write`.
+- Jobs calling `require-tag-on-main` need `contents: read` on `GITHUB_TOKEN`.
+  A job-level `permissions:` block that lists only `id-token: write` drops it,
+  the compare API then answers 404, and the guard refuses every release.
 - Scripts need `bash`, `curl`, `jq`, `yq`, `git`, `docker` (assert-promoted-image
   only), `npm` (npm-publish only) - all preinstalled on GitHub `ubuntu-latest`
   and Blacksmith images.
