@@ -450,6 +450,21 @@ jobs:
           [ "${{ steps.unknown_sha.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.unknown_sha.outcome }}'"; exit 1; }
           echo "unknown commit correctly failed closed"
 
+      - name: an unknown repository fails closed
+        id: unknown_repo
+        continue-on-error: true
+        uses: ./require-tag-on-main
+        with:
+          repository: Lazco-Corporation/does-not-exist-require-tag-on-main
+          sha: main
+          branch: main
+          token: ${{ github.token }}
+
+      - name: assert unknown repository failed
+        run: |
+          [ "${{ steps.unknown_repo.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.unknown_repo.outcome }}'"; exit 1; }
+          echo "unknown repository correctly failed closed"
+
       - name: an empty token fails closed
         id: no_token
         continue-on-error: true

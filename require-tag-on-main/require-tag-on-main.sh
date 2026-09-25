@@ -48,11 +48,18 @@ trap 'rm -f "$body"' EXIT
 #   behind     BASE contains HEAD, so the commit is merged
 #   ahead      HEAD carries commits BASE lacks
 #   diverged   both carry commits the other lacks
-code="$(curl -sS -o "$body" --max-time 15 -w '%{http_code}' \
+# curl prints %{http_code} even when the transfer fails, so the code is
+# assigned on success only. Appending a fallback to the output would read
+# "000000" on a dropped connection.
+if ! code="$(curl -sS -o "$body" --max-time 15 -w '%{http_code}' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
-  "${API_URL}/repos/${REPOSITORY}/compare/${BRANCH}...${SHA}" 2> /dev/null || echo "000")"
+  "${API_URL}/repos/${REPOSITORY}/compare/${BRANCH}...${SHA}" 2> /dev/null)"; then
+  fail "Cannot verify the tag" \
+    "GitHub did not respond at ${API_URL} - refusing the release (fail-closed)" \
+    "no response from the compare API"
+fi
 
 if [ "$code" != "200" ]; then
   fail "Cannot verify the tag" \
@@ -60,7 +67,13 @@ if [ "$code" != "200" ]; then
     "compare API returned HTTP \`${code}\`"
 fi
 
-status="$(jq -r '.status // empty' "$body")"
+# Under set -e a failed jq would exit here with no annotation, so the parse
+# gets its own failure message.
+if ! status="$(jq -r '.status // empty' "$body" 2> /dev/null)"; then
+  fail "Cannot verify the tag" \
+    "compare returned HTTP 200 with a body that is not JSON - refusing the release (fail-closed)" \
+    "compare API returned an unreadable body"
+fi
 
 case "$status" in
   identical | behind)

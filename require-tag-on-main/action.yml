@@ -19,9 +19,9 @@ inputs:
     description: "GitHub token with contents: read (github.token is enough)."
     required: true
   api-url:
-    description: "GitHub API base (github.api_url)."
+    description: "GitHub API base. Defaults to the API of the host running the workflow."
     required: false
-    default: "https://api.github.com"
+    default: ${{ github.api_url }}
 runs:
   using: "composite"
   steps:

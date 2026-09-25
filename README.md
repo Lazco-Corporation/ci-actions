@@ -36,7 +36,7 @@ The repo is public, so any Lazco repo can call these actions, public or private.
 A private action repo cannot be called from a public repo, which is why this one
 is public.
 
-Every tag-triggered release calls `require-tag-on-main` before it builds or
+Every tag-triggered release must call `require-tag-on-main` before it builds or
 ships anything. A tag can point at any commit, including one that no branch
 holds, and neither a branch filter nor `prod-actor-guard` catches that:
 
@@ -58,6 +58,9 @@ Requirements of calling jobs:
   (OIDC tokens are minted per job; composite actions cannot declare permissions).
 - Jobs calling `npm-publish` with the default `provenance: true` need the same
   `permissions: id-token: write`.
+- Jobs calling `require-tag-on-main` need `contents: read` on `GITHUB_TOKEN`.
+  A job-level `permissions:` block that lists only `id-token: write` drops it,
+  the compare API then answers 404, and the guard refuses every release.
 - Scripts need `bash`, `curl`, `jq`, `yq`, `git`, `docker` (assert-promoted-image
   only), `npm` (npm-publish only) - all preinstalled on GitHub `ubuntu-latest`
   and Blacksmith images.
