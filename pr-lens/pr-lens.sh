@@ -269,6 +269,42 @@ canvas_refusal() {
   echo "$1 answered $2: $(jq -r '.error | "\(.code): \(.message)"' "${WORK}/canvas-answer.json" 2> /dev/null)" >&2
 }
 
+# PUTs one document, and retries 3 times what a retry can fix: no answer, a
+# server error, a rate limit, or a revision that moved, which is what a push
+# that timed out but still landed looks like. Anything else, such as a refused
+# document, answers at once. Prints the last HTTP status, or "no answer".
+put_canvas() {
+  local id="$1"
+  local rev="$2"
+  local document="$3"
+  local attempt
+  local status
+  local code
+  for attempt in 1 2 3 4; do
+    status="$(canvas_api PUT "/api/canvas/${id}" \
+      -H "content-type: application/json" \
+      -H "if-match: ${rev}" \
+      --data-binary @"${document}")" || status="no answer"
+    if [ "${status}" = "200" ]; then
+      echo "${status}"
+      return 0
+    fi
+    code="$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)"
+    if [ "${status}" = "409" ] && [ "${code}" = "REVISION_MOVED" ]; then
+      rev="$(jq -r '.error.rev' "${WORK}/canvas-answer.json")"
+    elif [ "${status}" != "no answer" ] && [ "${status}" != "429" ] && ! [[ "${status}" =~ ^5 ]]; then
+      echo "${status}"
+      return 0
+    fi
+    if [ "${attempt}" -eq 4 ] || ! still_current; then
+      break
+    fi
+    echo "pushing canvas ${id} answered ${status}${code:+ ${code}} - retry ${attempt}/3 in $((attempt * 5))s" >&2
+    sleep "$((attempt * 5))"
+  done
+  echo "${status}"
+}
+
 drop_minted() {
   local status
   status="$(canvas_api DELETE "/api/canvas/$1")" || status="no answer"
@@ -331,10 +367,19 @@ push_canvas() {
     return 1
   fi
 
-  status="$(canvas_api PUT "/api/canvas/${id}" \
-    -H "content-type: application/json" \
-    -H "if-match: ${rev}" \
-    --data-binary @"${ASSETS}/drawn.graph.json")" || status="no answer"
+  status="$(put_canvas "${id}" "${rev}" "${ASSETS}/drawn.graph.json")"
+  # The app checks that every walkthrough step names something the diagrams
+  # draw. The same document is refused the same way every time, so a retry
+  # cannot fix it. Without its walkthrough, the canvas still zooms, pans, and
+  # shows every payload.
+  if [ "${status}" = "422" ] &&
+    [ "$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)" = "CANNOT_DRAW" ] &&
+    jq -e 'has("walkthrough")' "${ASSETS}/drawn.graph.json" > /dev/null 2>&1; then
+    canvas_refusal "pushing canvas ${id}" "${status}"
+    echo "pushing canvas ${id} again without its walkthrough"
+    jq 'del(.walkthrough)' "${ASSETS}/drawn.graph.json" > "${WORK}/canvas-no-walkthrough.json" || return 1
+    status="$(put_canvas "${id}" "${rev}" "${WORK}/canvas-no-walkthrough.json")"
+  fi
   if [ "${status}" != "200" ]; then
     canvas_refusal "pushing canvas ${id}" "${status}"
     # A canvas minted by this run and never drawn is empty, and the comment
