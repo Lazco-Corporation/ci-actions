@@ -262,7 +262,21 @@ canvas_api() {
 }
 
 canvas_refusal() {
+  if [ "$2" = "no answer" ]; then
+    echo "$1 got no answer from ${CANVAS_APP}" >&2
+    return 0
+  fi
   echo "$1 answered $2: $(jq -r '.error | "\(.code): \(.message)"' "${WORK}/canvas-answer.json" 2> /dev/null)" >&2
+}
+
+drop_minted() {
+  local status
+  status="$(canvas_api DELETE "/api/canvas/$1")" || status="no answer"
+  if [ "${status}" = "200" ]; then
+    echo "deleted the empty canvas $1 this run minted"
+  else
+    canvas_refusal "deleting the empty canvas $1" "${status}"
+  fi
 }
 
 # Pushes the drawing and writes the canvas id to ${WORK}/canvas-id. The last
@@ -276,6 +290,7 @@ push_canvas() {
   local id
   local rev=""
   local status
+  local minted=""
 
   # A header file, so the token never appears in a process listing.
   (umask 077 && printf 'authorization: Bearer %s\n' "${PR_LENS_TOKEN}" > "${WORK}/canvas-auth") || return 1
@@ -308,6 +323,7 @@ push_canvas() {
     fi
     id="$(jq -r '.id' "${WORK}/canvas-answer.json")" || return 1
     rev="$(jq -r '.rev' "${WORK}/canvas-answer.json")" || return 1
+    minted="${id}"
   fi
 
   if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]] || ! [[ "${rev}" =~ ^[0-9]+$ ]]; then
@@ -318,9 +334,14 @@ push_canvas() {
   status="$(canvas_api PUT "/api/canvas/${id}" \
     -H "content-type: application/json" \
     -H "if-match: ${rev}" \
-    --data-binary @"${ASSETS}/drawn.graph.json")" || return 1
+    --data-binary @"${ASSETS}/drawn.graph.json")" || status="no answer"
   if [ "${status}" != "200" ]; then
     canvas_refusal "pushing canvas ${id}" "${status}"
+    # A canvas minted by this run and never drawn is empty, and the comment
+    # will not name it, so nothing would ever find it again.
+    if [ -n "${minted}" ]; then
+      drop_minted "${minted}"
+    fi
     return 1
   fi
 
