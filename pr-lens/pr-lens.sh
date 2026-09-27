@@ -307,7 +307,7 @@ push_canvas() {
       return 1
     fi
     id="$(jq -r '.id' "${WORK}/canvas-answer.json")" || return 1
-    rev=0
+    rev="$(jq -r '.rev' "${WORK}/canvas-answer.json")" || return 1
   fi
 
   if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]] || ! [[ "${rev}" =~ ^[0-9]+$ ]]; then
