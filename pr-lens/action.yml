@@ -1,0 +1,123 @@
+# Composite action: draw a pull request with PR Lens and comment the diagrams.
+#
+# The model endpoint, model name, and key come from Infisical through the
+# infisical-fetch action, so none of them lives in GitHub or in this public
+# repo. The calling job must declare:
+#   permissions:
+#     contents: write        # push the SVGs to the data branch
+#     pull-requests: write   # post the comment
+#     id-token: write        # Infisical OIDC
+# and check out with `fetch-depth: 0`, because the diff needs both commits.
+#
+# Run it only on same-repository pull requests. A fork gets no OIDC token, so
+# the Infisical fetch fails.
+
+name: "PR Lens"
+description: "Analyze a pull request's diff with a model from Infisical, render architecture and data-flow SVGs, publish them to a data branch, and keep one comment up to date."
+inputs:
+  identity-id:
+    description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
+    required: true
+  project-slug:
+    description: "Infisical project that holds the PR Lens config at its root: PR_LENS_BASE_URL, PR_LENS_MODEL, and PR_LENS_API_KEY."
+    required: false
+    default: "lazco-pr-lens-ci-shared"
+  lens:
+    description: "Comma-separated lenses (architecture, data-flow). Empty = both."
+    required: false
+    default: ""
+  data-branch:
+    description: "Orphan branch the SVGs are committed to. It holds no code and is never merged."
+    required: false
+    default: "pr-lens"
+  comment-author:
+    description: "Login that owns the comment. Only its comments are ever edited. Change it when github-token belongs to another identity."
+    required: false
+    default: "github-actions[bot]"
+  branding:
+    description: "'true' = keep the PR Lens footer in the comment."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to publish the SVGs and post the comment."
+    required: false
+    default: ${{ github.token }}
+outputs:
+  graph:
+    description: "Path of the analyzed graph document."
+    value: ${{ steps.analyze.outputs.graph }}
+  assets-url:
+    description: "Base URL the SVGs are published at."
+    value: ${{ steps.publish.outputs.assets_url }}
+  result:
+    description: "posted | updated | superseded"
+    value: ${{ steps.comment.outputs.result }}
+runs:
+  using: "composite"
+  steps:
+    - name: Check the pull request
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        DATA_BRANCH: ${{ inputs.data-branch }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" check
+
+    - name: Fetch PR Lens config from Infisical
+      uses: Lazco-Corporation/ci-actions/infisical-fetch@v1
+      with:
+        project-slug: ${{ inputs.project-slug }}
+        env-slug: prod
+        identity-id: ${{ inputs.identity-id }}
+        secret-path: /
+        required-keys: PR_LENS_BASE_URL,PR_LENS_MODEL,PR_LENS_API_KEY
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Install the PR Lens CLI
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" install
+
+    # PR_LENS_BASE_URL, PR_LENS_MODEL, and PR_LENS_API_KEY reach this step
+    # through $GITHUB_ENV, written by infisical-fetch.
+    - name: Analyze the diff
+      id: analyze
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        LENS: ${{ inputs.lens }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" analyze
+
+    # Applies the repo's `.github/pr-lens.yml` corrections, when present.
+    - name: Render the diagrams
+      shell: bash
+      run: bash "${{ github.action_path }}/pr-lens.sh" render
+
+    - name: Publish the SVGs
+      id: publish
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        DATA_BRANCH: ${{ inputs.data-branch }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" publish
+
+    - name: Post the comment
+      id: comment
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        ASSETS_URL: ${{ steps.publish.outputs.assets_url }}
+        COMMENT_AUTHOR: ${{ inputs.comment-author }}
+        BRANDING: ${{ inputs.branding }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" comment

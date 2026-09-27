@@ -1,7 +1,8 @@
 # Self-test for the composite actions in this repo. Runs the checked-out commit
 # via local refs (uses: ./<action>), so every change is validated before the v1
-# tag is moved. infisical-fetch is excluded: it needs an Infisical machine
-# identity bound to this repo, which does not exist.
+# tag is moved. infisical-fetch and the full pr-lens flow are excluded: they
+# need an Infisical machine identity bound to this repo, which does not exist,
+# and pr-lens also needs a pull request. The pr-lens job covers the rest.
 #
 # Expected-failure cases use continue-on-error + an outcome assertion.
 
@@ -479,3 +480,49 @@ jobs:
         run: |
           [ "${{ steps.no_token.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.no_token.outcome }}'"; exit 1; }
           echo "empty token correctly failed closed"
+
+  # The full pr-lens action needs a pull request and an Infisical identity, so
+  # this job covers the parts that need neither: the lockfile install and the
+  # fail-closed checks.
+  pr-lens:
+    name: pr-lens
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: the CLI installs from the lockfile
+        env:
+          ACTION_PATH: ${{ github.workspace }}/pr-lens
+        run: bash pr-lens/pr-lens.sh install
+
+      - name: a run with no pull request is rejected
+        id: no_pr
+        continue-on-error: true
+        env:
+          PR_NUMBER: ""
+          BASE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash pr-lens/pr-lens.sh check
+
+      - name: assert no pull request failed
+        run: |
+          [ "${{ steps.no_pr.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.no_pr.outcome }}'"; exit 1; }
+          echo "run with no pull request correctly rejected"
+
+      - name: a shallow checkout is rejected
+        id: shallow
+        continue-on-error: true
+        env:
+          PR_NUMBER: "1"
+          BASE_SHA: "0000000000000000000000000000000000000000"
+          HEAD_SHA: ${{ github.sha }}
+        run: bash pr-lens/pr-lens.sh check
+
+      - name: assert shallow checkout failed
+        run: |
+          [ "${{ steps.shallow.outcome }}" = "failure" ] || { echo "::error::expected failure, got '${{ steps.shallow.outcome }}'"; exit 1; }
+          echo "missing base commit correctly rejected"

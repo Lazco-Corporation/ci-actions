@@ -32,7 +32,9 @@ moment the tag moves, so the tag move is the release, not the merge.
 
 One directory per action. Each holds `action.yml` plus one bash script of the
 same name. `infisical-fetch` is the exception and has no script - it wraps a
-vendor action.
+vendor action. `pr-lens` also holds a `package.json` and a lockfile that pin
+the CLI, plus the upstream MIT notice in `LICENSE-pr-lens`. Keep that notice.
+The publish and comment steps are adapted from upstream code.
 
 `fixtures/` backs the self-test: a fake gitops repo, two npm package states
 (unpublished and already-published), and `health-server.py` for
@@ -74,6 +76,8 @@ Plain ASCII, sentence case.
 2. Run the **Self-test** workflow (`workflow_dispatch`). It calls every action
    through local refs (`uses: ./<action>`) and covers expected-failure paths.
    `infisical-fetch` is excluded - it needs an identity bound to this repo.
+   `pr-lens` is covered only up to the install and the fail-closed checks.
+   Test the rest on a real pull request that pins the branch commit.
 3. Only then move `v1`.
 
 Breaking an input or output means minting `v2` and migrating callers. Do not
@@ -85,14 +89,15 @@ Rollback is pointing `v1` at the previous commit and force-pushing.
 ## Tooling assumptions
 
 Scripts may use `bash`, `curl`, `jq`, `yq`, and `git`. `docker` is
-`assert-promoted-image` only, `npm` is `npm-publish` only. All are preinstalled
+`assert-promoted-image` only, `npm` is `npm-publish` and `pr-lens` only, and
+`gh` is `pr-lens` only. All are preinstalled
 on `ubuntu-latest` and Blacksmith images. Adding a new dependency means every
 consumer job must provide it, so prefer what is already there.
 
 Composite actions cannot declare `permissions`. When an action needs a token
 scope, the calling job must grant it, and that requirement belongs in
-`README.md`. Two need `id-token: write`: `infisical-fetch`, and `npm-publish`
-when provenance is on.
+`README.md`. Three need `id-token: write`: `infisical-fetch`, `pr-lens`, and
+`npm-publish` when provenance is on.
 
 ## License
 

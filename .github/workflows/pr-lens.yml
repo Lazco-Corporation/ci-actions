@@ -1,0 +1,43 @@
+# PR Lens draws each pull request's architecture and data flow, and keeps one
+# comment on the pull request up to date. The model config comes from
+# Infisical (lazco-pr-lens-ci-shared, prod, /). See the pr-lens section of
+# Lazco-Corporation/ci-actions README.md.
+
+name: PR Lens
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+# Every run writes the same comment and the same data branch, so a new push
+# cancels the run it replaces.
+concurrency:
+  group: pr-lens-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lens:
+    name: PR Lens
+    # A fork and Dependabot get no OIDC token, so Infisical would refuse them.
+    if: >-
+      !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the SVGs to the pr-lens branch
+      pull-requests: write # post the comment
+      id-token: write # Infisical OIDC
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the diff needs both the base and the head commit
+
+      # A local ref, so each pull request here runs the action it changes.
+      - uses: ./pr-lens
+        with:
+          identity-id: "4926cec2-6183-49f1-b2b5-2e468cb2cdf6"
