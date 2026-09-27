@@ -36,6 +36,11 @@ vendor action. `pr-lens` also holds a `package.json` and a lockfile that pin
 the CLI, plus the upstream MIT notice in `LICENSE-pr-lens`. Keep that notice.
 The publish and comment steps are adapted from upstream code.
 
+`.github/workflows/reusable-pr-lens.yml` is the one reusable workflow here.
+Other repos call it at `@v1`, so the same tag move releases it. Inside it,
+the action ref must be the full `Lazco-Corporation/ci-actions/pr-lens@v1`.
+A `./pr-lens` ref would resolve against the caller's repo, not this one.
+
 `fixtures/` backs the self-test: a fake gitops repo, two npm package states
 (unpublished and already-published), and `health-server.py` for
 `verify-deployment`.
