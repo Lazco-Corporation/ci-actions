@@ -182,27 +182,37 @@ publish() {
   echo "assets_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/raw/${DATA_BRANCH}/${directory}" >> "$GITHUB_OUTPUT"
 }
 
-# Whether this run still draws the pull request's current head. A run that was
-# overtaken while it drew must not replace a newer diagram with an older one.
-# Only GitHub knows the current head, and not knowing is a failure, never a
-# reason to stay quiet. `set -e` does not apply inside a function used as an
-# `if` condition, so a failed lookup exits here by hand.
+# Prints the pull request's head commit and answers whether this run still
+# draws it: 0 = it does, 1 = the pull request moved on, 2 = GitHub did not say.
+# A run that was overtaken while it drew must not replace a newer diagram with
+# an older one, and only GitHub knows the current head.
+head_state() {
+  local current
+  current="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)" || return 2
+  [ -n "${current}" ] || return 2
+  printf '%s' "${current}"
+  [ "${current}" = "${HEAD_SHA}" ] || return 1
+}
+
+# For the comment, not knowing the head is a failure, never a reason to stay
+# quiet. `set -e` does not apply inside a function used as an `if` condition,
+# so a failed lookup exits here by hand.
 overtaken() {
   local current
-  if ! current="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)"; then
-    echo "::error title=PR Lens failed::could not read the head commit of #${PR_NUMBER} from GitHub - re-run the workflow"
-    exit 1
-  fi
-  if [ -z "${current}" ]; then
-    echo "::error title=PR Lens failed::GitHub named no head commit for #${PR_NUMBER} - re-run the workflow"
-    exit 1
-  fi
-  if [ "${current}" = "${HEAD_SHA}" ]; then
-    return 1
-  fi
-  echo "::notice title=PR Lens skipped::#${PR_NUMBER} moved on to ${current} - the run for that commit draws it"
-  echo "result=superseded" >> "$GITHUB_OUTPUT"
-  return 0
+  local state=0
+  current="$(head_state)" || state=$?
+  case "${state}" in
+    0) return 1 ;;
+    1)
+      echo "::notice title=PR Lens skipped::#${PR_NUMBER} moved on to ${current} - the run for that commit draws it"
+      echo "result=superseded" >> "$GITHUB_OUTPUT"
+      return 0
+      ;;
+    *)
+      echo "::error title=PR Lens failed::could not read the head commit of #${PR_NUMBER} from GitHub - re-run the workflow"
+      exit 1
+      ;;
+  esac
 }
 
 # The PR Lens comment on the pull request, as one JSON line, or nothing.
@@ -218,50 +228,103 @@ own_comment() {
     "${WORK}/comments.jsonl" | head -n 1
 }
 
+# The canvas id a PR Lens comment carries in its hidden line, or nothing.
+canvas_id_in() {
+  [ -n "$1" ] || return 0
+  jq -r '.body' <<< "$1" |
+    sed -nE "s/^<!-- ${CANVAS_MARKER} ([A-Za-z0-9_-]{22}) -->\$/\1/p" | head -n 1
+}
+
+# Checked right before each push, as comment() checks before its write, so a
+# run overtaken while it pulled never pushes an older drawing as the newest.
+still_current() {
+  local state=0
+  head_state > /dev/null || state=$?
+  [ "${state}" -eq 0 ] && return 0
+  echo "the pull request moved on, or GitHub did not say where its head is - not pushing" >&2
+  return 1
+}
+
+# One request to the canvas API (docs/canvas-api.md upstream, version 1),
+# always as the account. The CLI's `canvas pull` never sends the account
+# token, so it cannot read a canvas its owner made private, and would take
+# that canvas for a deleted one. Prints the HTTP status. The answer lands in
+# ${WORK}/canvas-answer.json.
+canvas_api() {
+  local method="$1"
+  local path="$2"
+  shift 2
+  curl -sS -X "${method}" "${CANVAS_APP}${path}" \
+    -H @"${WORK}/canvas-auth" \
+    -H "accept: application/json" \
+    -o "${WORK}/canvas-answer.json" -w '%{http_code}' \
+    --max-time 60 "$@"
+}
+
+canvas_refusal() {
+  echo "$1 answered $2: $(jq -r '.error | "\(.code): \(.message)"' "${WORK}/canvas-answer.json" 2> /dev/null)" >&2
+}
+
 # Pushes the drawing and writes the canvas id to ${WORK}/canvas-id. The last
 # run left its canvas id in the comment, so every run pushes a new revision of
 # one canvas per pull request. The account token owns every canvas it mints,
-# which is what lets a fresh runner push to one without its write token.
-# The CLI keeps a registry under .pr-lens/ and edits .gitignore, so it runs in
-# a scratch repo, never in the pull request's checkout. `set -e` does not
-# apply here, because canvas() calls this as an `if` condition, so every
-# command checks its own status.
+# so it can push to one from a fresh runner that holds no write token.
+# `set -e` does not apply here, because canvas() calls this in an `||`
+# list, so every command checks its own status.
 push_canvas() {
-  local scratch="${RUNNER_TEMP}/pr-lens-canvas"
   local mine
-  local id=""
-  rm -rf "${scratch}" || return 1
-  mkdir -p "${scratch}" || return 1
-  git -C "${scratch}" init --quiet || return 1
-  cd "${scratch}" || return 1
+  local id
+  local rev=""
+  local status
+
+  # A header file, so the token never appears in a process listing.
+  (umask 077 && printf 'authorization: Bearer %s\n' "${PR_LENS_TOKEN}" > "${WORK}/canvas-auth") || return 1
 
   mine="$(own_comment)" || return 1
-  if [ -n "${mine}" ]; then
-    id="$(jq -r '.body' <<< "${mine}" |
-      sed -nE "s/^<!-- ${CANVAS_MARKER} ([A-Za-z0-9_-]{22}) -->\$/\1/p" | head -n 1)"
-  fi
+  id="$(canvas_id_in "${mine}")"
 
   if [ -n "${id}" ]; then
-    if cli canvas pull "${id}" -o "${scratch}/previous.graph.json" 2> "${scratch}/pull.err"; then
-      cli canvas push "${ASSETS}/drawn.graph.json" --canvas "${id}" || return 1
-    elif grep -q '\[CANVAS_UNKNOWN\]' "${scratch}/pull.err"; then
-      echo "canvas ${id} no longer exists - minting a new one"
-      id=""
-    else
-      cat "${scratch}/pull.err" >&2
-      return 1
-    fi
+    status="$(canvas_api GET "/api/canvas/${id}")" || return 1
+    case "${status}" in
+      200) rev="$(jq -r '.rev' "${WORK}/canvas-answer.json")" || return 1 ;;
+      404)
+        echo "canvas ${id} no longer exists - minting a new one"
+        id=""
+        ;;
+      *)
+        canvas_refusal "reading canvas ${id}" "${status}"
+        return 1
+        ;;
+    esac
   fi
+
+  still_current || return 1
 
   if [ -z "${id}" ]; then
-    cli canvas push "${ASSETS}/drawn.graph.json" --name "${GITHUB_REPOSITORY}#${PR_NUMBER}" || return 1
-    id="$(cli canvas list --json | jq -r '.canvases[0].id // empty')" || return 1
+    status="$(canvas_api POST /api/canvas)" || return 1
+    if [ "${status}" != "201" ]; then
+      canvas_refusal "minting a canvas" "${status}"
+      return 1
+    fi
+    id="$(jq -r '.id' "${WORK}/canvas-answer.json")" || return 1
+    rev=0
   fi
 
-  if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]]; then
-    echo "the CLI named no canvas id (got '${id}')" >&2
+  if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]] || ! [[ "${rev}" =~ ^[0-9]+$ ]]; then
+    echo "the canvas API named no usable canvas (id '${id}', rev '${rev}')" >&2
     return 1
   fi
+
+  status="$(canvas_api PUT "/api/canvas/${id}" \
+    -H "content-type: application/json" \
+    -H "if-match: ${rev}" \
+    --data-binary @"${ASSETS}/drawn.graph.json")" || return 1
+  if [ "${status}" != "200" ]; then
+    canvas_refusal "pushing canvas ${id}" "${status}"
+    return 1
+  fi
+
+  echo "pushed canvas ${id} at rev $(jq -r '.rev' "${WORK}/canvas-answer.json")"
   printf '%s' "${id}" > "${WORK}/canvas-id"
 }
 
@@ -269,12 +332,26 @@ push_canvas() {
 # the comment come from the data branch, not from prlens.dev.
 canvas() {
   export GH_TOKEN="${GITHUB_TOKEN}"
-  if overtaken; then
-    return 0
-  fi
+  local state=0
+  head_state > /dev/null || state=$?
+  case "${state}" in
+    0) ;;
+    1)
+      echo "::notice title=PR Lens canvas skipped::#${PR_NUMBER} moved on - the run for that commit pushes the canvas"
+      return 0
+      ;;
+    *)
+      echo "::warning title=PR Lens canvas skipped::could not read the head commit of #${PR_NUMBER} from GitHub - the comment step decides whether to post"
+      return 0
+      ;;
+  esac
 
   rm -f "${WORK}/canvas-id"
-  if ! push_canvas; then
+  mkdir -p "${WORK}"
+  local pushed=0
+  push_canvas || pushed=$?
+  rm -f "${WORK}/canvas-auth"
+  if [ "${pushed}" -ne 0 ]; then
     echo "::warning title=PR Lens canvas skipped::could not push #${PR_NUMBER} to ${CANVAS_APP} - the comment goes out without the canvas link, and the next run tries again"
     return 0
   fi
@@ -305,23 +382,32 @@ comment() {
     ${branding_args[@]+"${branding_args[@]}"} \
     --out "${body}"
 
-  # The link goes right under the marker, which must stay the first line. The
-  # id rides in its own hidden line, where the next run's canvas step reads it.
+  local mine
+  mine="$(own_comment)"
+
+  # The id rides in a hidden line right under the marker, which must stay the
+  # first line, and the next run's canvas step reads it there. When this run
+  # pushed no canvas, the id the comment already carries is kept without a
+  # link, so the next run retries that canvas instead of minting another. A
+  # kept id that no longer exists is replaced on that retry.
   local canvas_url=""
-  if [ -n "${CANVAS_ID:-}" ]; then
-    canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
+  local kept_id=""
+  if [ -z "${CANVAS_ID:-}" ]; then
+    kept_id="$(canvas_id_in "${mine}")"
+  fi
+  if [ -n "${CANVAS_ID:-}" ] || [ -n "${kept_id}" ]; then
     {
       head -n 1 "${body}"
-      echo "<!-- ${CANVAS_MARKER} ${CANVAS_ID} -->"
-      echo ""
-      echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> · zoom and pan, click an arrow for its payload, or play the walkthrough</p>"
+      echo "<!-- ${CANVAS_MARKER} ${CANVAS_ID:-${kept_id}} -->"
+      if [ -n "${CANVAS_ID:-}" ]; then
+        canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
+        echo ""
+        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; zoom and pan, click an arrow for its payload, or play the walkthrough</p>"
+      fi
       tail -n +2 "${body}"
     } > "${body}.canvas"
     mv "${body}.canvas" "${body}"
   fi
-
-  local mine
-  mine="$(own_comment)"
 
   # Checked again, because composing the body and listing the comments take
   # seconds, and this check guards the write.

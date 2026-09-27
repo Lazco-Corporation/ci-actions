@@ -171,8 +171,13 @@ Behavior worth knowing:
   is what lets a fresh runner push to one. List them with
   `pr-lens canvas list --remote`.
 - A canvas holds the drawn graph document, not the code: component names, file
-  paths, descriptions, and payload samples. Anyone with its link can open it.
-  prlens.dev keeps it in the EU until it is deleted.
+  paths, descriptions, and payload samples. A new canvas is open: anyone with
+  its link can open it. prlens.dev keeps it in the EU until it is deleted.
+- The owner can make a canvas private in the app. The action keeps pushing to
+  it, but then only the owner account can open it.
+- The canvas step calls the canvas API with `curl`, as the account, instead of
+  the CLI. `pr-lens canvas pull` never sends the account token, so it cannot
+  read a private canvas and would take it for a deleted one.
 - The comment shows dark diagrams only. A light and dark `<picture>` pair
   follows the reader's operating system, not their GitHub theme, so it showed
   light diagrams on a dark GitHub page. The canvas has its own theme toggle,
