@@ -58,7 +58,7 @@ cli() {
 
 check() {
   if [ -z "${PR_NUMBER:-}" ]; then
-    echo "::error title=PR Lens cannot run::this run has no pull request - trigger the workflow on pull_request only"
+    echo "::error title=PR Lens cannot run::this run has no pull request - trigger on pull_request, or pass pr-number, base-sha, and head-sha"
     exit 1
   fi
   for sha in "${BASE_SHA}" "${HEAD_SHA}"; do

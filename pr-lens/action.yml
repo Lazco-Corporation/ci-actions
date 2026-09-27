@@ -11,6 +11,10 @@
 #
 # Run it only on same-repository pull requests. A fork gets no OIDC token, so
 # the Infisical fetch fails.
+#
+# On a pull_request event the pull request comes from the event. Any other
+# event must pass pr-number, base-sha, and head-sha, and check out head-sha.
+# The reusable workflow .github/workflows/reusable-pr-lens.yml does both.
 
 name: "PR Lens"
 description: "Analyze a pull request's diff with a model from Infisical, render architecture and data-flow SVGs, publish them to a data branch, and keep one comment up to date."
@@ -18,6 +22,18 @@ inputs:
   identity-id:
     description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
     required: true
+  pr-number:
+    description: "Pull request to draw. Defaults to the pull_request event's."
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  base-sha:
+    description: "Base commit of the diff. Defaults to the pull_request event's."
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+  head-sha:
+    description: "Head commit of the diff. Defaults to the pull_request event's."
+    required: false
+    default: ${{ github.event.pull_request.head.sha }}
   project-slug:
     description: "Infisical project that holds the PR Lens config at its root: PR_LENS_BASE_URL, PR_LENS_MODEL, and PR_LENS_API_KEY."
     required: false
@@ -58,9 +74,9 @@ runs:
     - name: Check the pull request
       shell: bash
       env:
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
         DATA_BRANCH: ${{ inputs.data-branch }}
       run: bash "${{ github.action_path }}/pr-lens.sh" check
 
@@ -89,9 +105,9 @@ runs:
       id: analyze
       shell: bash
       env:
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
         LENS: ${{ inputs.lens }}
       run: bash "${{ github.action_path }}/pr-lens.sh" analyze
 
@@ -104,8 +120,8 @@ runs:
       id: publish
       shell: bash
       env:
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        HEAD_SHA: ${{ inputs.head-sha }}
         DATA_BRANCH: ${{ inputs.data-branch }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "${{ github.action_path }}/pr-lens.sh" publish
@@ -114,8 +130,8 @@ runs:
       id: comment
       shell: bash
       env:
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        HEAD_SHA: ${{ inputs.head-sha }}
         ASSETS_URL: ${{ steps.publish.outputs.assets_url }}
         COMMENT_AUTHOR: ${{ inputs.comment-author }}
         BRANDING: ${{ inputs.branding }}
