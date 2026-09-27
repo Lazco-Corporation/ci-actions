@@ -1,8 +1,12 @@
 # Composite action: draw a pull request with PR Lens and comment the diagrams.
 #
-# The model endpoint, model name, and key come from Infisical through the
-# infisical-fetch action, so none of them lives in GitHub or in this public
-# repo. The calling job must declare:
+# The model endpoint, model name, and key, and the PR Lens account token, come
+# from Infisical through the infisical-fetch action, so none of them lives in
+# GitHub or in this public repo.
+#
+# Each pull request also gets one canvas on prlens.dev, the interactive view,
+# linked from the comment. It holds the drawn graph document, not the code.
+# The calling job must declare:
 #   permissions:
 #     contents: write        # push the SVGs to the data branch
 #     pull-requests: write   # post the comment
@@ -17,7 +21,7 @@
 # The reusable workflow .github/workflows/reusable-pr-lens.yml does both.
 
 name: "PR Lens"
-description: "Analyze a pull request's diff with a model from Infisical, render architecture and data-flow SVGs, publish them to a data branch, and keep one comment up to date."
+description: "Analyze a pull request's diff with a model from Infisical, render architecture and data-flow SVGs, publish them to a data branch, push a canvas to prlens.dev, and keep one comment up to date."
 inputs:
   identity-id:
     description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
@@ -65,6 +69,9 @@ outputs:
   assets-url:
     description: "Base URL the SVGs are published at."
     value: ${{ steps.publish.outputs.assets_url }}
+  canvas-url:
+    description: "View link of the pull request's canvas. Empty when the push failed."
+    value: ${{ steps.canvas.outputs.canvas_url }}
   result:
     description: "posted | updated | superseded"
     value: ${{ steps.comment.outputs.result }}
@@ -87,7 +94,7 @@ runs:
         env-slug: prod
         identity-id: ${{ inputs.identity-id }}
         secret-path: /
-        required-keys: PR_LENS_BASE_URL,PR_LENS_MODEL,PR_LENS_API_KEY
+        required-keys: PR_LENS_BASE_URL,PR_LENS_MODEL,PR_LENS_API_KEY,PR_LENS_TOKEN
 
     - uses: actions/setup-node@v4
       with:
@@ -126,6 +133,18 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "${{ github.action_path }}/pr-lens.sh" publish
 
+    # PR_LENS_TOKEN reaches this step through $GITHUB_ENV. A failure here is a
+    # warning, and the comment goes out without the canvas link.
+    - name: Push the canvas
+      id: canvas
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        COMMENT_AUTHOR: ${{ inputs.comment-author }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "${{ github.action_path }}/pr-lens.sh" canvas
+
     - name: Post the comment
       id: comment
       shell: bash
@@ -133,6 +152,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         HEAD_SHA: ${{ inputs.head-sha }}
         ASSETS_URL: ${{ steps.publish.outputs.assets_url }}
+        CANVAS_ID: ${{ steps.canvas.outputs.canvas_id }}
         COMMENT_AUTHOR: ${{ inputs.comment-author }}
         BRANDING: ${{ inputs.branding }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
