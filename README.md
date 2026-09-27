@@ -116,7 +116,7 @@ Behavior worth knowing:
 ### pr-lens
 
 Runs [PR Lens](https://github.com/coldteadotai/pr-lens) on a pull request.
-It analyzes the diff with a model, renders light and dark SVGs, pushes them to
+It analyzes the diff with a model, renders dark SVGs, pushes them to
 an orphan `pr-lens` branch, pushes the drawing to a canvas on prlens.dev, and
 posts one comment that later runs update in place. The comment links the canvas,
 the interactive view: zoom and pan, payloads, and the walkthrough.
@@ -173,6 +173,10 @@ Behavior worth knowing:
 - A canvas holds the drawn graph document, not the code: component names, file
   paths, descriptions, and payload samples. Anyone with its link can open it.
   prlens.dev keeps it in the EU until it is deleted.
+- The comment shows dark diagrams only. A light and dark `<picture>` pair
+  follows the reader's operating system, not their GitHub theme, so it showed
+  light diagrams on a dark GitHub page. The canvas has its own theme toggle,
+  kept per browser, and defaults to the operating system.
 - A canvas push that fails is a warning. The comment goes out without the
   link, and the next run mints or updates the canvas again.
 - The CLI and every dependency install from `pr-lens/package-lock.json`.

@@ -113,8 +113,11 @@ analyze() {
   echo "graph=${GRAPH}" >> "$GITHUB_OUTPUT"
 }
 
+# Dark only, so the comment shows one dark image to every reader. A light and
+# dark pair would follow each reader's operating system, not their GitHub
+# theme. The canvas draws its own pictures and is unaffected.
 render() {
-  cli render "${GRAPH}" --out "${ASSETS}"
+  cli render "${GRAPH}" --theme dark --out "${ASSETS}"
 }
 
 # GitHub proxies comment images through a cache that never revalidates, so a
