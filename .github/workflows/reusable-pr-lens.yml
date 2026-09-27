@@ -48,7 +48,7 @@ jobs:
         with:
           fetch-depth: 0 # the diff needs both the base and the head commit
 
-      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
+      - uses: Lazco-Corporation/ci-actions/pr-lens@43ace0dfe5129080b027379aea74b45236d8d9e7
         with:
           identity-id: ${{ inputs.identity-id }}
 
@@ -111,7 +111,7 @@ jobs:
           ref: ${{ matrix.pull-request.head }}
           fetch-depth: 0
 
-      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
+      - uses: Lazco-Corporation/ci-actions/pr-lens@43ace0dfe5129080b027379aea74b45236d8d9e7
         with:
           identity-id: ${{ inputs.identity-id }}
           pr-number: ${{ matrix.pull-request.number }}
