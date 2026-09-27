@@ -18,6 +18,7 @@ runnable locally.
 | `verify-deployment` | Poll the health endpoint until HTTP 200 + expected version, then confirm stability |
 | `npm-publish` | Publish a built package: version-gate, skip if already published, sign with provenance, verify the dist-tag |
 | `discord-notify` | Failure notification naming the failed job(s) (from the `needs` context) |
+| `pr-lens` | Draw a pull request's architecture and data flow with PR Lens and keep one comment up to date |
 
 ## Usage
 
@@ -61,9 +62,11 @@ Requirements of calling jobs:
 - Jobs calling `require-tag-on-main` need `contents: read` on `GITHUB_TOKEN`.
   A job-level `permissions:` block that lists only `id-token: write` drops it,
   the compare API then answers 404, and the guard refuses every release.
+- Jobs calling `pr-lens` need `contents: write`, `pull-requests: write`, and
+  `id-token: write`, and a checkout with `fetch-depth: 0`.
 - Scripts need `bash`, `curl`, `jq`, `yq`, `git`, `docker` (assert-promoted-image
-  only), `npm` (npm-publish only) - all preinstalled on GitHub `ubuntu-latest`
-  and Blacksmith images.
+  only), `npm` (npm-publish and pr-lens only), `gh` (pr-lens only) - all
+  preinstalled on GitHub `ubuntu-latest` and Blacksmith images.
 
 ### npm-publish
 
@@ -109,6 +112,69 @@ Behavior worth knowing:
   ranges) and publishes the tarball with `npm`.
 - A tarball publish runs `prepack`/`prepare` but not `prepublishOnly`,
   `publish`, or `postpublish`. Put release side effects in the workflow.
+
+### pr-lens
+
+Runs [PR Lens](https://github.com/coldteadotai/pr-lens) on a pull request.
+It analyzes the diff with a model, renders light and dark SVGs, pushes them to
+an orphan `pr-lens` branch, and posts one comment that later runs update in place.
+
+```yaml
+name: PR Lens
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-lens-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lens:
+    name: PR Lens
+    if: >-
+      !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
+        with:
+          identity-id: <infisical-identity-id>
+```
+
+Behavior worth knowing:
+
+- The model config comes from Infisical, project `lazco-pr-lens-ci-shared`, env
+  `prod`, path `/`: `PR_LENS_BASE_URL`, `PR_LENS_MODEL`, and
+  `PR_LENS_API_KEY`. The endpoint must speak OpenAI `/chat/completions` and
+  accept `response_format: json_object` and `max_tokens`.
+- The identity pins the org by its immutable id in the subject, and each
+  calling repo by its immutable id in the `repository_id` claim. A new repo
+  must be added to that claim before its first run. The subject cannot list
+  the repos itself: Infisical stores it in 255 characters.
+- The CLI and every dependency install from `pr-lens/package-lock.json`.
+  To upgrade, change the version in `pr-lens/package.json` and run
+  `npm install --package-lock-only --ignore-scripts` in that directory.
+- The comment links the SVGs through `github.com/<repo>/raw/`. A private
+  repo's images never load from `raw.githubusercontent.com`, because the
+  browser sends no GitHub session there.
+- A fork pull request gets no OIDC token, so the caller must skip it. The
+  `if:` above does that.
+- A repo can commit `.github/pr-lens.yml` to correct the diagrams. See the
+  upstream schema README for the format.
 
 ## Log style conventions
 
