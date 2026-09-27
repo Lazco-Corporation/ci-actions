@@ -119,44 +119,42 @@ Runs [PR Lens](https://github.com/coldteadotai/pr-lens) on a pull request.
 It analyzes the diff with a model, renders light and dark SVGs, pushes them to
 an orphan `pr-lens` branch, and posts one comment that later runs update in place.
 
+Call it through the reusable workflow `.github/workflows/reusable-pr-lens.yml`.
+It picks the pull requests, skips the ones PR Lens cannot draw, and sets the
+concurrency group per pull request:
+
 ```yaml
 name: PR Lens
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: pr-lens-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
-  lens:
-    name: PR Lens
-    if: >-
-      !github.event.pull_request.draft
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  pr-lens:
+    uses: Lazco-Corporation/ci-actions/.github/workflows/reusable-pr-lens.yml@v1
     permissions:
       contents: write
       pull-requests: write
       id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
-        with:
-          identity-id: <infisical-identity-id>
+    with:
+      identity-id: <infisical-identity-id>
 ```
+
+Do not add a workflow-level `concurrency` block to the caller. The reusable
+workflow sets one per pull request, at the job level.
 
 Behavior worth knowing:
 
+- A `pull_request` run draws that pull request. A manual run
+  (`workflow_dispatch`) draws every open pull request at its current head,
+  4 at a time. Each one costs a model call and posts or updates a comment.
+- Both runs skip a draft, a fork, and a Dependabot pull request. A fork gets no
+  OIDC token, so Infisical would refuse it.
 - The model config comes from Infisical, project `lazco-pr-lens-ci-shared`, env
   `prod`, path `/`: `PR_LENS_BASE_URL`, `PR_LENS_MODEL`, and
   `PR_LENS_API_KEY`. The endpoint must speak OpenAI `/chat/completions` and
@@ -171,8 +169,9 @@ Behavior worth knowing:
 - The comment links the SVGs through `github.com/<repo>/raw/`. A private
   repo's images never load from `raw.githubusercontent.com`, because the
   browser sends no GitHub session there.
-- A fork pull request gets no OIDC token, so the caller must skip it. The
-  `if:` above does that.
+- The action itself takes `pr-number`, `base-sha`, and `head-sha`. They
+  default to the `pull_request` event's. Any other event must pass all three
+  and check out `head-sha` with `fetch-depth: 0`.
 - A repo can commit `.github/pr-lens.yml` to correct the diagrams. See the
   upstream schema README for the format.
 

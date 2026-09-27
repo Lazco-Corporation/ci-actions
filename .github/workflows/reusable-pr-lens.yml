@@ -1,0 +1,119 @@
+# Reusable workflow: run PR Lens on one pull request, or on every open one.
+#
+# A caller runs it on pull_request and on workflow_dispatch:
+#   - pull_request draws the pull request of the event.
+#   - workflow_dispatch draws every open pull request that PR Lens can draw:
+#     not a draft, not from a fork, not from Dependabot.
+#
+# The caller job must grant contents: write, pull-requests: write, and
+# id-token: write. A reusable workflow cannot grant more than its caller.
+# The OIDC token still names the caller repo, so the Infisical identity binds
+# the caller, not this repo.
+
+name: PR Lens
+
+on:
+  workflow_call:
+    inputs:
+      identity-id:
+        description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  # One pull request, from the event.
+  lens:
+    name: PR Lens
+    # A fork and Dependabot get no OIDC token, so Infisical would refuse them.
+    if: >-
+      github.event_name == 'pull_request'
+      && !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Every run for a pull request writes the same comment, so a new push
+    # cancels the run it replaces. The manual run shares this group.
+    concurrency:
+      group: pr-lens-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: write # push the SVGs to the pr-lens branch
+      pull-requests: write # post the comment
+      id-token: write # Infisical OIDC
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the diff needs both the base and the head commit
+
+      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
+        with:
+          identity-id: ${{ inputs.identity-id }}
+
+  # Every open pull request, for a manual run.
+  list:
+    name: List open pull requests
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      pull-requests: ${{ steps.list.outputs.pull_requests }}
+      count: ${{ steps.list.outputs.count }}
+    steps:
+      - id: list
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pull_requests="$(gh api "repos/${REPOSITORY}/pulls?state=open&per_page=100" --paginate \
+            --jq '.[]
+              | select(.draft | not)
+              | select(.head.repo.full_name == env.REPOSITORY)
+              | select(.user.login != "dependabot[bot]")
+              | {number, base: .base.sha, head: .head.sha}' |
+            jq -cs 'sort_by(.number)')"
+          count="$(jq length <<< "${pull_requests}")"
+          echo "pull_requests=${pull_requests}" >> "$GITHUB_OUTPUT"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=PR Lens manual run::${count} open pull request(s) to draw: $(jq -r 'map("#\(.number)") | join(" ")' <<< "${pull_requests}")"
+
+  lens-all:
+    name: "PR Lens #${{ matrix.pull-request.number }}"
+    needs: list
+    if: needs.list.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      # Every job pushes to the one pr-lens branch. The publish step retries a
+      # lost push five times, which holds at this width.
+      max-parallel: 4
+      matrix:
+        pull-request: ${{ fromJSON(needs.list.outputs.pull-requests) }}
+    concurrency:
+      group: pr-lens-${{ github.repository }}-${{ matrix.pull-request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      # The head commit, so the repo's `.github/pr-lens.yml` corrections are
+      # the pull request's own, as on a pull_request run.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pull-request.head }}
+          fetch-depth: 0
+
+      - uses: Lazco-Corporation/ci-actions/pr-lens@v1
+        with:
+          identity-id: ${{ inputs.identity-id }}
+          pr-number: ${{ matrix.pull-request.number }}
+          base-sha: ${{ matrix.pull-request.base }}
+          head-sha: ${{ matrix.pull-request.head }}
