@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pr-lens - draw a pull request's architecture and data flow with the PR Lens
-# CLI, publish the SVGs to a data branch, and keep one comment on the pull
-# request up to date.
+# CLI, publish the SVGs to a data branch, push the drawing to a canvas on
+# prlens.dev, and keep one comment on the pull request up to date.
 #
 # The publish and comment steps are adapted from coldteadotai/pr-lens
 # packages/action (MIT, see LICENSE-pr-lens). Two changes from upstream:
@@ -11,29 +11,33 @@
 #     raw.githubusercontent.com. A browser sends no GitHub session to
 #     raw.githubusercontent.com, so a private repo's images there never load.
 #
-# Usage: pr-lens.sh <check | install | analyze | render | publish | comment>
+# Usage: pr-lens.sh <check | install | analyze | render | publish | canvas | comment>
 #
 # Env inputs:
 #   GITHUB_REPOSITORY  owner/repo (set by Actions)
 #   GITHUB_SERVER_URL  default https://github.com
 #   RUNNER_TEMP        work directory root (default /tmp)
-#   PR_NUMBER          pull request number                          (check, analyze, publish, comment)
+#   PR_NUMBER          pull request number                          (check, analyze, publish, canvas, comment)
 #   BASE_SHA           pull request base commit                     (check, analyze)
-#   HEAD_SHA           pull request head commit                     (check, analyze, publish, comment)
+#   HEAD_SHA           pull request head commit                     (check, analyze, publish, canvas, comment)
 #   ACTION_PATH        directory holding package.json + lockfile    (install)
 #   PR_LENS_BASE_URL   OpenAI-compatible endpoint base              (analyze)
 #   PR_LENS_MODEL      model name on that endpoint                  (analyze)
 #   PR_LENS_API_KEY    key for that endpoint                        (analyze)
 #   LENS               comma-separated lenses, empty = both         (analyze)
 #   DATA_BRANCH        orphan branch for the SVGs (default pr-lens) (publish)
-#   GITHUB_TOKEN       contents: write (publish), pull-requests: write (comment)
+#   GITHUB_TOKEN       contents: write (publish), pull-requests: write (canvas, comment)
+#   PR_LENS_TOKEN      PR Lens account token that owns the canvases (canvas)
 #   ASSETS_URL         base URL of the published SVGs               (comment)
-#   COMMENT_AUTHOR     login that owns the comment (default github-actions[bot]) (comment)
+#   CANVAS_ID          canvas to link, empty = no link              (comment)
+#   COMMENT_AUTHOR     login that owns the comment (default github-actions[bot]) (canvas, comment)
 #   BRANDING           true | false, the PR Lens footer (default true) (comment)
 #
 # Outputs (GITHUB_OUTPUT):
 #   graph       path of the analyzed graph document  (analyze)
 #   assets_url  base URL of the published SVGs        (publish)
+#   canvas_id   id of the pushed canvas, empty on failure (canvas)
+#   canvas_url  view link of that canvas              (canvas)
 #   result      posted | updated | superseded         (comment)
 
 set -euo pipefail
@@ -46,6 +50,9 @@ RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
 DATA_BRANCH="${DATA_BRANCH:-pr-lens}"
 COMMENT_AUTHOR="${COMMENT_AUTHOR:-github-actions[bot]}"
 BRANDING="${BRANDING:-true}"
+
+CANVAS_APP="https://prlens.dev"
+CANVAS_MARKER="pr-lens-canvas"
 
 WORK="${RUNNER_TEMP}/pr-lens"
 CLI_DIR="${RUNNER_TEMP}/pr-lens-cli"
@@ -180,19 +187,100 @@ publish() {
 overtaken() {
   local current
   if ! current="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)"; then
-    echo "::error title=PR Lens comment failed::could not read the head commit of #${PR_NUMBER} from GitHub - re-run the workflow"
+    echo "::error title=PR Lens failed::could not read the head commit of #${PR_NUMBER} from GitHub - re-run the workflow"
     exit 1
   fi
   if [ -z "${current}" ]; then
-    echo "::error title=PR Lens comment failed::GitHub named no head commit for #${PR_NUMBER} - re-run the workflow"
+    echo "::error title=PR Lens failed::GitHub named no head commit for #${PR_NUMBER} - re-run the workflow"
     exit 1
   fi
   if [ "${current}" = "${HEAD_SHA}" ]; then
     return 1
   fi
-  echo "::notice title=PR Lens comment skipped::#${PR_NUMBER} moved on to ${current} - the run for that commit posts the comment"
+  echo "::notice title=PR Lens skipped::#${PR_NUMBER} moved on to ${current} - the run for that commit draws it"
   echo "result=superseded" >> "$GITHUB_OUTPUT"
   return 0
+}
+
+# The PR Lens comment on the pull request, as one JSON line, or nothing.
+# Anyone can post the marker, so the marker alone does not make a comment
+# ours. Only a comment that COMMENT_AUTHOR wrote counts.
+own_comment() {
+  local marker
+  marker="$(cli comment --print-marker)" || return 1
+  gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq '.[]' \
+    > "${WORK}/comments.jsonl" || return 1
+  jq -c --arg author "${COMMENT_AUTHOR}" --arg marker "${marker}" \
+    'select(.user.login == $author) | select(.body | startswith($marker))' \
+    "${WORK}/comments.jsonl" | head -n 1
+}
+
+# Pushes the drawing and writes the canvas id to ${WORK}/canvas-id. The last
+# run left its canvas id in the comment, so every run pushes a new revision of
+# one canvas per pull request. The account token owns every canvas it mints,
+# which is what lets a fresh runner push to one without its write token.
+# The CLI keeps a registry under .pr-lens/ and edits .gitignore, so it runs in
+# a scratch repo, never in the pull request's checkout. `set -e` does not
+# apply here, because canvas() calls this as an `if` condition, so every
+# command checks its own status.
+push_canvas() {
+  local scratch="${RUNNER_TEMP}/pr-lens-canvas"
+  local mine
+  local id=""
+  rm -rf "${scratch}" || return 1
+  mkdir -p "${scratch}" || return 1
+  git -C "${scratch}" init --quiet || return 1
+  cd "${scratch}" || return 1
+
+  mine="$(own_comment)" || return 1
+  if [ -n "${mine}" ]; then
+    id="$(jq -r '.body' <<< "${mine}" |
+      sed -nE "s/^<!-- ${CANVAS_MARKER} ([A-Za-z0-9_-]{22}) -->\$/\1/p" | head -n 1)"
+  fi
+
+  if [ -n "${id}" ]; then
+    if cli canvas pull "${id}" -o "${scratch}/previous.graph.json" 2> "${scratch}/pull.err"; then
+      cli canvas push "${ASSETS}/drawn.graph.json" --canvas "${id}" || return 1
+    elif grep -q '\[CANVAS_UNKNOWN\]' "${scratch}/pull.err"; then
+      echo "canvas ${id} no longer exists - minting a new one"
+      id=""
+    else
+      cat "${scratch}/pull.err" >&2
+      return 1
+    fi
+  fi
+
+  if [ -z "${id}" ]; then
+    cli canvas push "${ASSETS}/drawn.graph.json" --name "${GITHUB_REPOSITORY}#${PR_NUMBER}" || return 1
+    id="$(cli canvas list --json | jq -r '.canvases[0].id // empty')" || return 1
+  fi
+
+  if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]]; then
+    echo "the CLI named no canvas id (got '${id}')" >&2
+    return 1
+  fi
+  printf '%s' "${id}" > "${WORK}/canvas-id"
+}
+
+# A failure here costs the canvas link, never the comment: the diagrams in
+# the comment come from the data branch, not from prlens.dev.
+canvas() {
+  export GH_TOKEN="${GITHUB_TOKEN}"
+  if overtaken; then
+    return 0
+  fi
+
+  rm -f "${WORK}/canvas-id"
+  if ! push_canvas; then
+    echo "::warning title=PR Lens canvas skipped::could not push #${PR_NUMBER} to ${CANVAS_APP} - the comment goes out without the canvas link, and the next run tries again"
+    return 0
+  fi
+
+  local id
+  id="$(cat "${WORK}/canvas-id")"
+  echo "canvas_id=${id}" >> "$GITHUB_OUTPUT"
+  echo "canvas_url=${CANVAS_APP}/c/${id}" >> "$GITHUB_OUTPUT"
+  echo "::notice title=PR Lens canvas pushed::#${PR_NUMBER} at ${CANVAS_APP}/c/${id}"
 }
 
 comment() {
@@ -214,18 +302,23 @@ comment() {
     ${branding_args[@]+"${branding_args[@]}"} \
     --out "${body}"
 
-  local marker
-  marker="$(cli comment --print-marker)"
+  # The link goes right under the marker, which must stay the first line. The
+  # id rides in its own hidden line, where the next run's canvas step reads it.
+  local canvas_url=""
+  if [ -n "${CANVAS_ID:-}" ]; then
+    canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
+    {
+      head -n 1 "${body}"
+      echo "<!-- ${CANVAS_MARKER} ${CANVAS_ID} -->"
+      echo ""
+      echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> · zoom and pan, click an arrow for its payload, or play the walkthrough</p>"
+      tail -n +2 "${body}"
+    } > "${body}.canvas"
+    mv "${body}.canvas" "${body}"
+  fi
 
-  gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq '.[]' \
-    > "${WORK}/comments.jsonl"
-
-  # Anyone can post the marker, so the marker alone does not make a comment
-  # ours. Only a comment that COMMENT_AUTHOR wrote is ever edited.
   local mine
-  mine="$(jq -c --arg author "${COMMENT_AUTHOR}" --arg marker "${marker}" \
-    'select(.user.login == $author) | select(.body | startswith($marker))' \
-    "${WORK}/comments.jsonl" | head -n 1)"
+  mine="$(own_comment)"
 
   # Checked again, because composing the body and listing the comments take
   # seconds, and this check guards the write.
@@ -256,14 +349,15 @@ comment() {
     echo "| Head | \`${HEAD_SHA}\` |"
     echo "| Comment | ${result} |"
     echo "| Diagrams | [\`${DATA_BRANCH}\`](${ASSETS_URL}) |"
+    echo "| Canvas | ${canvas_url:-none} |"
     echo ""
   } >> "$GITHUB_STEP_SUMMARY"
 }
 
 case "${STEP}" in
-  check | install | analyze | render | publish | comment) "${STEP}" ;;
+  check | install | analyze | render | publish | canvas | comment) "${STEP}" ;;
   *)
-    echo "::error title=PR Lens misconfigured::unknown step '${STEP}' - use check, install, analyze, render, publish, or comment"
+    echo "::error title=PR Lens misconfigured::unknown step '${STEP}' - use check, install, analyze, render, publish, canvas, or comment"
     exit 1
     ;;
 esac

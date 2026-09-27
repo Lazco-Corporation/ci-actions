@@ -117,7 +117,9 @@ Behavior worth knowing:
 
 Runs [PR Lens](https://github.com/coldteadotai/pr-lens) on a pull request.
 It analyzes the diff with a model, renders light and dark SVGs, pushes them to
-an orphan `pr-lens` branch, and posts one comment that later runs update in place.
+an orphan `pr-lens` branch, pushes the drawing to a canvas on prlens.dev, and
+posts one comment that later runs update in place. The comment links the canvas,
+the interactive view: zoom and pan, payloads, and the walkthrough.
 
 Call it through the reusable workflow `.github/workflows/reusable-pr-lens.yml`.
 It picks the pull requests, skips the ones PR Lens cannot draw, and sets the
@@ -155,14 +157,24 @@ Behavior worth knowing:
   4 at a time. Each one costs a model call and posts or updates a comment.
 - Both runs skip a draft, a fork, and a Dependabot pull request. A fork gets no
   OIDC token, so Infisical would refuse it.
-- The model config comes from Infisical, project `lazco-pr-lens-ci-shared`, env
-  `prod`, path `/`: `PR_LENS_BASE_URL`, `PR_LENS_MODEL`, and
-  `PR_LENS_API_KEY`. The endpoint must speak OpenAI `/chat/completions` and
+- The config comes from Infisical, project `lazco-pr-lens-ci-shared`, env
+  `prod`, path `/`: `PR_LENS_BASE_URL`, `PR_LENS_MODEL`, `PR_LENS_API_KEY`,
+  and `PR_LENS_TOKEN`, a PR Lens account token (`prl_u_...`). The endpoint must speak OpenAI `/chat/completions` and
   accept `response_format: json_object` and `max_tokens`.
 - The identity pins the org by its immutable id in the subject, and each
   calling repo by its immutable id in the `repository_id` claim. A new repo
   must be added to that claim before its first run. The subject cannot list
   the repos itself: Infisical stores it in 255 characters.
+- Each pull request gets one canvas. The comment carries its id in a hidden
+  `<!-- pr-lens-canvas <id> -->` line, and every later run pushes a new
+  revision of that canvas. The account token owns every canvas it mints, which
+  is what lets a fresh runner push to one. List them with
+  `pr-lens canvas list --remote`.
+- A canvas holds the drawn graph document, not the code: component names, file
+  paths, descriptions, and payload samples. Anyone with its link can open it.
+  prlens.dev keeps it in the EU until it is deleted.
+- A canvas push that fails is a warning. The comment goes out without the
+  link, and the next run mints or updates the canvas again.
 - The CLI and every dependency install from `pr-lens/package-lock.json`.
   To upgrade, change the version in `pr-lens/package.json` and run
   `npm install --package-lock-only --ignore-scripts` in that directory.
