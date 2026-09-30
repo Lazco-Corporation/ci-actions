@@ -30,6 +30,7 @@
 #   PR_LENS_TOKEN      PR Lens account token that owns the canvases (canvas)
 #   ASSETS_URL         base URL of the published SVGs               (comment)
 #   CANVAS_ID          canvas to link, empty = no link              (comment)
+#   CANVAS_WALKTHROUGH false when the canvas was pushed without its walkthrough (comment)
 #   COMMENT_AUTHOR     login that owns the comment (default github-actions[bot]) (canvas, comment)
 #   BRANDING           true | false, the PR Lens footer (default true) (comment)
 #
@@ -38,6 +39,7 @@
 #   assets_url  base URL of the published SVGs        (publish)
 #   canvas_id   id of the pushed canvas, empty on failure (canvas)
 #   canvas_url  view link of that canvas              (canvas)
+#   canvas_walkthrough  false when pushed without the walkthrough (canvas)
 #   result      posted | updated | superseded         (comment)
 
 set -euo pipefail
@@ -296,17 +298,29 @@ put_canvas() {
       echo "${status}"
       return 0
     fi
-    if [ "${attempt}" -eq 4 ] || ! still_current; then
+    if [ "${attempt}" -eq 4 ]; then
       break
     fi
     echo "pushing canvas ${id} answered ${status}${code:+ ${code}} - retry ${attempt}/3 in $((attempt * 5))s" >&2
     sleep "$((attempt * 5))"
+    still_current || break
   done
   echo "${status}"
 }
 
+# A push that got no answer may still have landed, so the canvas is read
+# first, and deleted only when it is still undrawn.
 drop_minted() {
   local status
+  status="$(canvas_api GET "/api/canvas/$1")" || status="no answer"
+  if [ "${status}" = "200" ]; then
+    echo "canvas $1 holds a drawing after all - keeping it" >&2
+    return 0
+  fi
+  if [ "${status}" != "404" ]; then
+    canvas_refusal "checking the canvas $1 before deleting it" "${status}"
+    return 0
+  fi
   status="$(canvas_api DELETE "/api/canvas/$1")" || status="no answer"
   if [ "${status}" = "200" ]; then
     echo "deleted the empty canvas $1 this run minted"
@@ -376,9 +390,12 @@ push_canvas() {
     [ "$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)" = "CANNOT_DRAW" ] &&
     jq -e 'has("walkthrough")' "${ASSETS}/drawn.graph.json" > /dev/null 2>&1; then
     canvas_refusal "pushing canvas ${id}" "${status}"
-    echo "pushing canvas ${id} again without its walkthrough"
-    jq 'del(.walkthrough)' "${ASSETS}/drawn.graph.json" > "${WORK}/canvas-no-walkthrough.json" || return 1
-    status="$(put_canvas "${id}" "${rev}" "${WORK}/canvas-no-walkthrough.json")"
+    if still_current &&
+      jq 'del(.walkthrough)' "${ASSETS}/drawn.graph.json" > "${WORK}/canvas-no-walkthrough.json"; then
+      echo "pushing canvas ${id} again without its walkthrough"
+      status="$(put_canvas "${id}" "${rev}" "${WORK}/canvas-no-walkthrough.json")"
+      [ "${status}" = "200" ] && touch "${WORK}/canvas-no-walkthrough"
+    fi
   fi
   if [ "${status}" != "200" ]; then
     canvas_refusal "pushing canvas ${id}" "${status}"
@@ -412,7 +429,7 @@ canvas() {
       ;;
   esac
 
-  rm -f "${WORK}/canvas-id"
+  rm -f "${WORK}/canvas-id" "${WORK}/canvas-no-walkthrough"
   mkdir -p "${WORK}"
   local pushed=0
   push_canvas || pushed=$?
@@ -426,6 +443,11 @@ canvas() {
   id="$(cat "${WORK}/canvas-id")"
   echo "canvas_id=${id}" >> "$GITHUB_OUTPUT"
   echo "canvas_url=${CANVAS_APP}/c/${id}" >> "$GITHUB_OUTPUT"
+  if [ -e "${WORK}/canvas-no-walkthrough" ]; then
+    echo "canvas_walkthrough=false" >> "$GITHUB_OUTPUT"
+  else
+    echo "canvas_walkthrough=true" >> "$GITHUB_OUTPUT"
+  fi
   echo "::notice title=PR Lens canvas pushed::#${PR_NUMBER} at ${CANVAS_APP}/c/${id}"
 }
 
@@ -468,7 +490,11 @@ comment() {
       if [ -n "${CANVAS_ID:-}" ]; then
         canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
         echo ""
-        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; zoom and pan, click an arrow for its payload, or play the walkthrough</p>"
+        local affordances="zoom and pan, click an arrow for its payload, or play the walkthrough"
+        if [ "${CANVAS_WALKTHROUGH:-true}" = "false" ]; then
+          affordances="zoom and pan, or click an arrow for its payload"
+        fi
+        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; ${affordances}</p>"
       fi
       tail -n +2 "${body}"
     } > "${body}.canvas"

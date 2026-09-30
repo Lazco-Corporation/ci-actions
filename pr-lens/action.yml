@@ -153,6 +153,7 @@ runs:
         HEAD_SHA: ${{ inputs.head-sha }}
         ASSETS_URL: ${{ steps.publish.outputs.assets_url }}
         CANVAS_ID: ${{ steps.canvas.outputs.canvas_id }}
+        CANVAS_WALKTHROUGH: ${{ steps.canvas.outputs.canvas_walkthrough }}
         COMMENT_AUTHOR: ${{ inputs.comment-author }}
         BRANDING: ${{ inputs.branding }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
