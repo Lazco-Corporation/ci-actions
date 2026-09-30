@@ -182,6 +182,10 @@ Behavior worth knowing:
   follows the reader's operating system, not their GitHub theme, so it showed
   light diagrams on a dark GitHub page. The canvas has its own theme toggle,
   kept per browser, and defaults to the operating system.
+- A canvas push is retried 3 times when a retry can fix it: no answer, a
+  server error, a rate limit, or a moved revision. When the app refuses the
+  walkthrough with `CANNOT_DRAW`, the drawing is pushed again without it, since
+  the same document is refused the same way every time.
 - A canvas push that fails is a warning. The comment goes out without the
   link, and the next run mints or updates the canvas again.
 - The CLI and every dependency install from `pr-lens/package-lock.json`.

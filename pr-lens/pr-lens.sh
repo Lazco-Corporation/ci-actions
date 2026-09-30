@@ -30,6 +30,7 @@
 #   PR_LENS_TOKEN      PR Lens account token that owns the canvases (canvas)
 #   ASSETS_URL         base URL of the published SVGs               (comment)
 #   CANVAS_ID          canvas to link, empty = no link              (comment)
+#   CANVAS_WALKTHROUGH false when the canvas was pushed without its walkthrough (comment)
 #   COMMENT_AUTHOR     login that owns the comment (default github-actions[bot]) (canvas, comment)
 #   BRANDING           true | false, the PR Lens footer (default true) (comment)
 #
@@ -38,6 +39,7 @@
 #   assets_url  base URL of the published SVGs        (publish)
 #   canvas_id   id of the pushed canvas, empty on failure (canvas)
 #   canvas_url  view link of that canvas              (canvas)
+#   canvas_walkthrough  false when pushed without the walkthrough (canvas)
 #   result      posted | updated | superseded         (comment)
 
 set -euo pipefail
@@ -262,7 +264,69 @@ canvas_api() {
 }
 
 canvas_refusal() {
+  if [ "$2" = "no answer" ]; then
+    echo "$1 got no answer from ${CANVAS_APP}" >&2
+    return 0
+  fi
   echo "$1 answered $2: $(jq -r '.error | "\(.code): \(.message)"' "${WORK}/canvas-answer.json" 2> /dev/null)" >&2
+}
+
+# PUTs one document, and retries 3 times what a retry can fix: no answer, a
+# server error, a rate limit, or a revision that moved, which is what a push
+# that timed out but still landed looks like. Anything else, such as a refused
+# document, answers at once. Prints the last HTTP status, or "no answer".
+put_canvas() {
+  local id="$1"
+  local rev="$2"
+  local document="$3"
+  local attempt
+  local status
+  local code
+  for attempt in 1 2 3 4; do
+    status="$(canvas_api PUT "/api/canvas/${id}" \
+      -H "content-type: application/json" \
+      -H "if-match: ${rev}" \
+      --data-binary @"${document}")" || status="no answer"
+    if [ "${status}" = "200" ]; then
+      echo "${status}"
+      return 0
+    fi
+    code="$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)"
+    if [ "${status}" = "409" ] && [ "${code}" = "REVISION_MOVED" ]; then
+      rev="$(jq -r '.error.rev' "${WORK}/canvas-answer.json")"
+    elif [ "${status}" != "no answer" ] && [ "${status}" != "429" ] && ! [[ "${status}" =~ ^5 ]]; then
+      echo "${status}"
+      return 0
+    fi
+    if [ "${attempt}" -eq 4 ]; then
+      break
+    fi
+    echo "pushing canvas ${id} answered ${status}${code:+ ${code}} - retry ${attempt}/3 in $((attempt * 5))s" >&2
+    sleep "$((attempt * 5))"
+    still_current || break
+  done
+  echo "${status}"
+}
+
+# A push that got no answer may still have landed, so the canvas is read
+# first, and deleted only when it is still undrawn.
+drop_minted() {
+  local status
+  status="$(canvas_api GET "/api/canvas/$1")" || status="no answer"
+  if [ "${status}" = "200" ]; then
+    echo "canvas $1 holds a drawing after all - keeping it" >&2
+    return 0
+  fi
+  if [ "${status}" != "404" ]; then
+    canvas_refusal "checking the canvas $1 before deleting it" "${status}"
+    return 0
+  fi
+  status="$(canvas_api DELETE "/api/canvas/$1")" || status="no answer"
+  if [ "${status}" = "200" ]; then
+    echo "deleted the empty canvas $1 this run minted"
+  else
+    canvas_refusal "deleting the empty canvas $1" "${status}"
+  fi
 }
 
 # Pushes the drawing and writes the canvas id to ${WORK}/canvas-id. The last
@@ -276,6 +340,7 @@ push_canvas() {
   local id
   local rev=""
   local status
+  local minted=""
 
   # A header file, so the token never appears in a process listing.
   (umask 077 && printf 'authorization: Bearer %s\n' "${PR_LENS_TOKEN}" > "${WORK}/canvas-auth") || return 1
@@ -308,6 +373,7 @@ push_canvas() {
     fi
     id="$(jq -r '.id' "${WORK}/canvas-answer.json")" || return 1
     rev="$(jq -r '.rev' "${WORK}/canvas-answer.json")" || return 1
+    minted="${id}"
   fi
 
   if ! [[ "${id}" =~ ^[A-Za-z0-9_-]{22}$ ]] || ! [[ "${rev}" =~ ^[0-9]+$ ]]; then
@@ -315,12 +381,29 @@ push_canvas() {
     return 1
   fi
 
-  status="$(canvas_api PUT "/api/canvas/${id}" \
-    -H "content-type: application/json" \
-    -H "if-match: ${rev}" \
-    --data-binary @"${ASSETS}/drawn.graph.json")" || return 1
+  status="$(put_canvas "${id}" "${rev}" "${ASSETS}/drawn.graph.json")"
+  # The app checks that every walkthrough step names something the diagrams
+  # draw. The same document is refused the same way every time, so a retry
+  # cannot fix it. Without its walkthrough, the canvas still zooms, pans, and
+  # shows every payload.
+  if [ "${status}" = "422" ] &&
+    [ "$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)" = "CANNOT_DRAW" ] &&
+    jq -e 'has("walkthrough")' "${ASSETS}/drawn.graph.json" > /dev/null 2>&1; then
+    canvas_refusal "pushing canvas ${id}" "${status}"
+    if still_current &&
+      jq 'del(.walkthrough)' "${ASSETS}/drawn.graph.json" > "${WORK}/canvas-no-walkthrough.json"; then
+      echo "pushing canvas ${id} again without its walkthrough"
+      status="$(put_canvas "${id}" "${rev}" "${WORK}/canvas-no-walkthrough.json")"
+      [ "${status}" = "200" ] && touch "${WORK}/canvas-no-walkthrough"
+    fi
+  fi
   if [ "${status}" != "200" ]; then
     canvas_refusal "pushing canvas ${id}" "${status}"
+    # A canvas minted by this run and never drawn is empty, and the comment
+    # will not name it, so nothing would ever find it again.
+    if [ -n "${minted}" ]; then
+      drop_minted "${minted}"
+    fi
     return 1
   fi
 
@@ -346,7 +429,7 @@ canvas() {
       ;;
   esac
 
-  rm -f "${WORK}/canvas-id"
+  rm -f "${WORK}/canvas-id" "${WORK}/canvas-no-walkthrough"
   mkdir -p "${WORK}"
   local pushed=0
   push_canvas || pushed=$?
@@ -360,6 +443,11 @@ canvas() {
   id="$(cat "${WORK}/canvas-id")"
   echo "canvas_id=${id}" >> "$GITHUB_OUTPUT"
   echo "canvas_url=${CANVAS_APP}/c/${id}" >> "$GITHUB_OUTPUT"
+  if [ -e "${WORK}/canvas-no-walkthrough" ]; then
+    echo "canvas_walkthrough=false" >> "$GITHUB_OUTPUT"
+  else
+    echo "canvas_walkthrough=true" >> "$GITHUB_OUTPUT"
+  fi
   echo "::notice title=PR Lens canvas pushed::#${PR_NUMBER} at ${CANVAS_APP}/c/${id}"
 }
 
@@ -402,7 +490,11 @@ comment() {
       if [ -n "${CANVAS_ID:-}" ]; then
         canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
         echo ""
-        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; zoom and pan, click an arrow for its payload, or play the walkthrough</p>"
+        local affordances="zoom and pan, click an arrow for its payload, or play the walkthrough"
+        if [ "${CANVAS_WALKTHROUGH:-true}" = "false" ]; then
+          affordances="zoom and pan, or click an arrow for its payload"
+        fi
+        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; ${affordances}</p>"
       fi
       tail -n +2 "${body}"
     } > "${body}.canvas"
