@@ -45,7 +45,7 @@ jobs:
       pull-requests: write # post the comment
       id-token: write # Infisical OIDC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the diff needs both the base and the head commit
 
@@ -109,7 +109,7 @@ jobs:
     steps:
       # The head commit, so the repo's `.github/pr-lens.yml` corrections are
       # the pull request's own, as on a pull_request run.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ matrix.pull-request.head }}
           fetch-depth: 0

@@ -96,7 +96,7 @@ runs:
         secret-path: /
         required-keys: PR_LENS_BASE_URL,PR_LENS_MODEL,PR_LENS_API_KEY,PR_LENS_TOKEN
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: "22"
 
