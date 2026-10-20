@@ -18,7 +18,7 @@ runnable locally.
 | `verify-deployment` | Poll the health endpoint until HTTP 200 + expected version, then confirm stability |
 | `npm-publish` | Publish a built package: version-gate, skip if already published, sign with provenance, verify the dist-tag |
 | `discord-notify` | Failure notification naming the failed job(s) (from the `needs` context) |
-| `pr-lens` | Draw a pull request's architecture and data flow with PR Lens and keep one comment up to date |
+| `pr-lens` | Describe a pull request in Traditional Chinese, draw the flows it changes, and keep one comment up to date |
 
 ## Usage
 
@@ -115,11 +115,12 @@ Behavior worth knowing:
 
 ### pr-lens
 
-Runs [PR Lens](https://github.com/coldteadotai/pr-lens) on a pull request.
-It analyzes the diff with a model, renders dark SVGs, pushes them to
-an orphan `pr-lens` branch, pushes the drawing to a canvas on prlens.dev, and
-posts one comment that later runs update in place. The comment links the canvas,
-the interactive view: zoom and pan, payloads, and the walkthrough.
+Describes a pull request in Traditional Chinese and draws the flows it changes
+with the [PR Lens](https://github.com/coldteadotai/pr-lens) renderer.
+It asks a model about the diff and the pull request description, renders dark
+SVGs, pushes them to an orphan `pr-lens` branch, pushes the drawing to a canvas
+on prlens.dev, and posts one comment that later runs update in place. The
+comment links the canvas, the interactive view: zoom and pan.
 
 Call it through the reusable workflow `.github/workflows/reusable-pr-lens.yml`.
 It picks the pull requests, skips the ones PR Lens cannot draw, and sets the
@@ -159,8 +160,25 @@ Behavior worth knowing:
   OIDC token, so Infisical would refuse it.
 - The config comes from Infisical, project `lazco-pr-lens-ci-shared`, env
   `prod`, path `/`: `PR_LENS_BASE_URL`, `PR_LENS_MODEL`, `PR_LENS_API_KEY`,
-  and `PR_LENS_TOKEN`, a PR Lens account token (`prl_u_...`). The endpoint must speak OpenAI `/chat/completions` and
-  accept `response_format: json_object` and `max_tokens`.
+  and `PR_LENS_TOKEN`, a PR Lens account token (`prl_u_...`). The endpoint must
+  speak OpenAI `/chat/completions`, stream with `stream: true`, and accept
+  `max_tokens`. Set any reasoning effort in `PR_LENS_MODEL`, in the form the
+  endpoint accepts.
+- The request streams, because a proxy in front of a model endpoint cuts a
+  request that sends nothing for about two minutes. A failed request is
+  retried twice, and the whole analysis stops after 10 minutes.
+- What the comment shows is decided from the diff, not by the model:
+  - a change of fewer than 20 lines, not counting tests and docs, gets text
+    only;
+  - otherwise each flow of 3 steps or more gets its own diagram, at most 2;
+  - with no such flow, an architecture view of at least 3 boxes and 2 lines
+    gets one diagram;
+  - anything less gets text only.
+  The `drawing` output says which one, and a text-only run publishes nothing
+  and pushes no canvas.
+- The comment is Traditional Chinese only. `pr-lens/prompt.md` holds the
+  instructions and the glossary of product terms the model must use. Change
+  the wording there.
 - The identity pins the org by its immutable id in the subject, and each
   calling repo by its immutable id in the `repository_id` claim. A new repo
   must be added to that claim before its first run. The subject cannot list
@@ -183,13 +201,12 @@ Behavior worth knowing:
   light diagrams on a dark GitHub page. The canvas has its own theme toggle,
   kept per browser, and defaults to the operating system.
 - A canvas push is retried 3 times when a retry can fix it: no answer, a
-  server error, a rate limit, or a moved revision. When the app refuses the
-  walkthrough with `CANNOT_DRAW`, the drawing is pushed again without it, since
-  the same document is refused the same way every time.
+  server error, a rate limit, or a moved revision.
 - A canvas push that fails is a warning. The comment goes out without the
   link, and the next run mints or updates the canvas again.
-- The CLI and every dependency install from `pr-lens/package-lock.json`.
-  To upgrade, change the version in `pr-lens/package.json` and run
+- The CLI, the schema, and every dependency install from
+  `pr-lens/package-lock.json`. Keep the schema version equal to the one the
+  CLI depends on. To upgrade, change the versions in `pr-lens/package.json` and run
   `npm install --package-lock-only --ignore-scripts` in that directory.
 - The comment links the SVGs through `github.com/<repo>/raw/`. A private
   repo's images never load from `raw.githubusercontent.com`, because the
@@ -198,7 +215,9 @@ Behavior worth knowing:
   default to the `pull_request` event's. Any other event must pass all three
   and check out `head-sha` with `fetch-depth: 0`.
 - A repo can commit `.github/pr-lens.yml` to correct the diagrams. See the
-  upstream schema README for the format.
+  upstream schema README for the format. The renderer applies its renames,
+  exclusions, lane pins, and groups. Its `lenses` field is not read: the action
+  decides what to draw.
 
 ## Log style conventions
 

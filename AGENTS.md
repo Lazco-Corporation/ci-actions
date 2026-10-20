@@ -33,8 +33,15 @@ moment the tag moves, so the tag move is the release, not the merge.
 One directory per action. Each holds `action.yml` plus one bash script of the
 same name. `infisical-fetch` is the exception and has no script - it wraps a
 vendor action. `pr-lens` also holds a `package.json` and a lockfile that pin
-the CLI, plus the upstream MIT notice in `LICENSE-pr-lens`. Keep that notice.
-The publish and comment steps are adapted from upstream code.
+the CLI and its schema, plus the upstream MIT notice in `LICENSE-pr-lens`.
+Keep that notice. The publish and comment steps, and parts of `lib.mjs`, are
+adapted from upstream code.
+
+`pr-lens` asks the model and writes the comment body in Node, not in bash:
+`pr-lens.mjs` does the network and file work, `lib.mjs` holds the pure logic,
+`lib.test.mjs` tests it, and `prompt.md` is the system prompt. `install` copies
+all four next to `node_modules`, so their imports resolve from the lockfile.
+Add a new Node file to that copy, or it never reaches the runner.
 
 `.github/workflows/reusable-pr-lens.yml` is the one reusable workflow here.
 Other repos call it at `@v1`, so the same tag move releases it. Inside it,
@@ -81,7 +88,8 @@ Plain ASCII, sentence case.
 2. Run the **Self-test** workflow (`workflow_dispatch`). It calls every action
    through local refs (`uses: ./<action>`) and covers expected-failure paths.
    `infisical-fetch` is excluded - it needs an identity bound to this repo.
-   `pr-lens` is covered only up to the install and the fail-closed checks.
+   `pr-lens` is covered only up to the install, `lib.test.mjs`, and the
+   fail-closed checks.
    Test the rest on a real pull request that pins the branch commit.
 3. Only then move `v1`.
 
@@ -94,7 +102,7 @@ Rollback is pointing `v1` at the previous commit and force-pushing.
 ## Tooling assumptions
 
 Scripts may use `bash`, `curl`, `jq`, `yq`, and `git`. `docker` is
-`assert-promoted-image` only, `npm` is `npm-publish` and `pr-lens` only, and
+`assert-promoted-image` only, `npm` and `node` are `npm-publish` and `pr-lens` only, and
 `gh` is `pr-lens` only. All are preinstalled
 on `ubuntu-latest` and Blacksmith images. Adding a new dependency means every
 consumer job must provide it, so prefer what is already there.

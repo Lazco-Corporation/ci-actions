@@ -1,9 +1,11 @@
 {
   "name": "ci-actions-pr-lens",
   "private": true,
-  "description": "Pins the PR Lens CLI and every transitive dependency, so each run installs the same code.",
+  "type": "module",
+  "description": "Pins the PR Lens CLI, its schema, and every transitive dependency, so each run installs the same code.",
   "license": "AGPL-3.0-or-later",
   "dependencies": {
-    "@coldtea/pr-lens-cli": "0.11.0"
+    "@coldtea/pr-lens-cli": "0.13.2",
+    "@coldtea/pr-lens-schema": "0.7.0"
   }
 }
