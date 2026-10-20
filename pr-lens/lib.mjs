@@ -16,7 +16,17 @@ export const MIN_ARCHITECTURE_EDGES = 2;
 // A change this small reads faster as two sentences than as a picture.
 export const MIN_RUNTIME_LINES = 20;
 
-const NOT_RUNTIME = /(\.test\.|\.spec\.|(^|\/)(tests?|e2e|__tests__|docs)\/|\.md$)/;
+// Tests and docs never earn a picture on their own. README.md lists these
+// same patterns, so change both together.
+const NOT_RUNTIME = [
+  /(^|\/)(tests?|__tests__|e2e|spec|testdata|fixtures|docs?)\//i,
+  /\.(test|spec)\.[^/]+$/i,
+  /_test\.[^/]+$/i,
+  /(^|\/)test_[^/]+\.py$/i,
+  /\.(md|mdx|rst|adoc)$/i,
+];
+
+export const isRuntimeFile = (path) => !NOT_RUNTIME.some((pattern) => pattern.test(path));
 
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -24,21 +34,30 @@ const isRecord = (value) => typeof value === "object" && value !== null && !Arra
 // earns a picture.
 export const runtimeLines = (files) =>
   files
-    .filter((file) => !NOT_RUNTIME.test(file.path))
+    .filter((file) => isRuntimeFile(file.path))
     .reduce((sum, file) => sum + (file.additions ?? 0) + (file.deletions ?? 0), 0);
 
-// `--numstat` reports a binary file's line counts as `-`, which is not zero.
-export const parseNumstat = (stdout) =>
-  stdout
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .flatMap((line) => {
-      const [additions, deletions, ...rest] = line.split("\t");
-      const path = rest.join("\t");
-      if (additions === undefined || deletions === undefined || path === "") return [];
-      const count = (value) => (value === "-" ? undefined : Number(value));
-      return [{ path, additions: count(additions), deletions: count(deletions) }];
-    });
+// Reads `git diff -z --numstat`. Without -z a rename reads `src/{a => b}.ts`,
+// which is no path at all. With -z a rename leaves the path field empty and
+// puts the old and the new path in the next two fields. A binary file's line
+// counts are `-`, which is not zero.
+export const parseNumstat = (stdout) => {
+  const fields = stdout.split("\0");
+  const files = [];
+  const count = (value) => (value === "-" ? undefined : Number(value));
+  for (let index = 0; index < fields.length; index += 1) {
+    if (fields[index] === "") continue;
+    const [additions, deletions, inline] = fields[index].split("\t");
+    let path = inline;
+    if (path === "") {
+      index += 2;
+      path = fields[index];
+    }
+    if (additions === undefined || deletions === undefined || !path) continue;
+    files.push({ path, additions: count(additions), deletions: count(deletions) });
+  }
+  return files;
+};
 
 const FENCE = /^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/;
 

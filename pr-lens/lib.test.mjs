@@ -3,7 +3,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SCHEMA_VERSION, safeParseGraphDoc } from "@coldtea/pr-lens-schema";
-import { chooseDrawing, composeComment, readJsonObject, runtimeLines } from "./lib.mjs";
+import {
+  chooseDrawing,
+  composeComment,
+  isRuntimeFile,
+  MIN_RUNTIME_LINES,
+  parseNumstat,
+  readJsonObject,
+  runtimeLines,
+} from "./lib.mjs";
 
 const message = (id, from, to) => ({ id, from, to, label: "呼叫", kind: "sync", delta: "added" });
 
@@ -58,6 +66,44 @@ test("runtime lines leave out tests and docs", () => {
     { path: "logo.png", additions: undefined, deletions: undefined },
   ];
   assert.equal(runtimeLines(files), 7);
+});
+
+test("tests and docs are told apart from code by the usual names", () => {
+  const notRuntime = [
+    "src/a.test.ts",
+    "src/a.spec.tsx",
+    "pkg/server_test.go",
+    "app/test_views.py",
+    "tests/unit/a.ts",
+    "src/__tests__/a.ts",
+    "e2e/login.ts",
+    "fixtures/npm-package/index.js",
+    "docs/guide.txt",
+    "doc/api.html",
+    "README.md",
+    "README.rst",
+    "CHANGELOG.MD",
+    "site/page.mdx",
+  ];
+  const runtime = ["src/server.ts", "src/latest.ts", "pkg/testing.go", "app/contest.py", "requirements.txt", "src/docsLink.ts"];
+  assert.deepEqual(notRuntime.filter(isRuntimeFile), []);
+  assert.deepEqual(runtime.filter((path) => !isRuntimeFile(path)), []);
+});
+
+test("numstat with -z gives the new path of a rename, and no count for a binary file", () => {
+  const stdout = "-\t-\tbin.dat\x001\t0\t\x00src/old.ts\x00src/new.ts\x003\t2\tsrc/a b.ts\x00";
+  assert.deepEqual(parseNumstat(stdout), [
+    { path: "bin.dat", additions: undefined, deletions: undefined },
+    { path: "src/new.ts", additions: 1, deletions: 0 },
+    { path: "src/a b.ts", additions: 3, deletions: 2 },
+  ]);
+});
+
+test("the cutoff draws at exactly MIN_RUNTIME_LINES, and not one line below", () => {
+  const document = documentWith({ flows: [flow("one", 4)] });
+  const lines = (count) => [{ path: "src/a.ts", additions: count, deletions: 0 }];
+  assert.equal(chooseDrawing(document, lines(MIN_RUNTIME_LINES - 1)).drawing, "none");
+  assert.equal(chooseDrawing(document, lines(MIN_RUNTIME_LINES)).drawing, "data-flow");
 });
 
 test("a small change is drawn as text only, even with a good flow", () => {

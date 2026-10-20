@@ -169,7 +169,11 @@ Behavior worth knowing:
   retried twice, and the whole analysis stops after 10 minutes.
 - What the comment shows is decided from the diff, not by the model:
   - a change of fewer than 20 lines, not counting tests and docs, gets text
-    only;
+    only. Tests and docs are files under a `test/`, `tests/`, `__tests__/`,
+    `e2e/`, `spec/`, `testdata/`, `fixtures/`, `doc/`, or `docs/` directory,
+    files named `*.test.*`, `*.spec.*`, `*_test.*`, or `test_*.py`, and
+    `.md`, `.mdx`, `.rst`, and `.adoc` files. `isRuntimeFile` in
+    `pr-lens/lib.mjs` holds the same list;
   - otherwise each flow of 3 steps or more gets its own diagram, at most 2;
   - with no such flow, an architecture view of at least 3 boxes and 2 lines
     gets one diagram;

@@ -25,7 +25,7 @@
 //   ${WORK}/choice.json        {drawing, reason, runtimeLines}              (analyze)
 //   ${WORK}/comment-body.md    the comment below its marker lines           (comment)
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,16 +73,30 @@ const env = (name) => {
 
 const git = (args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 
+// Reads at most a little past the budget, so a huge diff is cut, not buffered
+// whole. git stops on the closed pipe, and ENOBUFS is the expected answer.
+const readPatch = (base, head) => {
+  const result = spawnSync("git", ["diff", "--no-color", "--find-renames", "--unified=3", base, head], {
+    maxBuffer: MAX_DIFF_BYTES + 1,
+  });
+  if (result.error && result.error.code !== "ENOBUFS") throw result.error;
+  if (!result.error && result.status !== 0) {
+    throw new Failure(`git diff failed: ${result.stderr.toString("utf8").trim()}`, "check out with fetch-depth: 0, then re-run");
+  }
+  return result.stdout;
+};
+
 const collectDiff = (base, head) => {
-  const files = parseNumstat(git(["diff", "--numstat", "--find-renames", base, head]));
-  const patch = git(["diff", "--no-color", "--find-renames", "--unified=3", base, head]);
-  const withinBudget = Buffer.byteLength(patch, "utf8") <= MAX_DIFF_BYTES;
+  const files = parseNumstat(git(["diff", "-z", "--numstat", "--find-renames", base, head]));
+  const raw = readPatch(base, head);
+  const withinBudget = raw.length <= MAX_DIFF_BYTES;
+  const patch = (withinBudget ? raw : raw.subarray(0, MAX_DIFF_BYTES)).toString("utf8");
   const sum = (key) => files.reduce((total, file) => total + (file[key] ?? 0), 0);
   return {
     files,
     additions: sum("additions"),
     deletions: sum("deletions"),
-    patch: withinBudget ? patch : Buffer.from(patch, "utf8").subarray(0, MAX_DIFF_BYTES).toString("utf8"),
+    patch,
     truncatedAt: withinBudget ? undefined : MAX_DIFF_BYTES,
   };
 };
