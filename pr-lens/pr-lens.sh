@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# pr-lens - draw a pull request's architecture and data flow with the PR Lens
-# CLI, publish the SVGs to a data branch, push the drawing to a canvas on
-# prlens.dev, and keep one comment on the pull request up to date.
+# pr-lens - describe a pull request in Traditional Chinese, draw its changed
+# flows with the PR Lens renderer, publish the SVGs to a data branch, push the
+# drawing to a canvas on prlens.dev, and keep one comment on the pull request
+# up to date.
 #
 # The publish and comment steps are adapted from coldteadotai/pr-lens
-# packages/action (MIT, see LICENSE-pr-lens). Two changes from upstream:
+# packages/action (MIT, see LICENSE-pr-lens). Changes from upstream:
 #   - The CLI and every dependency install from package-lock.json. Upstream
 #     runs `npx`, which resolves caret ranges again on every run.
 #   - The SVGs are linked through <server>/<repo>/raw/, not
 #     raw.githubusercontent.com. A browser sends no GitHub session to
 #     raw.githubusercontent.com, so a private repo's images there never load.
+#   - pr-lens.mjs asks the model, not `pr-lens analyze`: its own prompt in
+#     prompt.md, the pull request description, a streamed request that a
+#     proxy timeout cannot cut, and retries. It also decides what to draw, and
+#     writes the comment body in Chinese.
 #
 # Usage: pr-lens.sh <check | install | analyze | render | publish | canvas | comment>
 #
@@ -20,26 +25,25 @@
 #   PR_NUMBER          pull request number                          (check, analyze, publish, canvas, comment)
 #   BASE_SHA           pull request base commit                     (check, analyze)
 #   HEAD_SHA           pull request head commit                     (check, analyze, publish, canvas, comment)
-#   ACTION_PATH        directory holding package.json + lockfile    (install)
-#   PR_LENS_BASE_URL   OpenAI-compatible endpoint base              (analyze)
+#   ACTION_PATH        directory holding package.json, lockfile, pr-lens.mjs (install)
+#   PR_LENS_BASE_URL   OpenAI-compatible endpoint base, must stream (analyze)
 #   PR_LENS_MODEL      model name on that endpoint                  (analyze)
 #   PR_LENS_API_KEY    key for that endpoint                        (analyze)
-#   LENS               comma-separated lenses, empty = both         (analyze)
 #   DATA_BRANCH        orphan branch for the SVGs (default pr-lens) (publish)
-#   GITHUB_TOKEN       contents: write (publish), pull-requests: write (canvas, comment)
+#   GITHUB_TOKEN       pull-requests: read (analyze), contents: write (publish),
+#                      pull-requests: write (canvas, comment)
 #   PR_LENS_TOKEN      PR Lens account token that owns the canvases (canvas)
-#   ASSETS_URL         base URL of the published SVGs               (comment)
+#   ASSETS_URL         base URL of the published SVGs, empty = none (comment)
 #   CANVAS_ID          canvas to link, empty = no link              (comment)
-#   CANVAS_WALKTHROUGH false when the canvas was pushed without its walkthrough (comment)
 #   COMMENT_AUTHOR     login that owns the comment (default github-actions[bot]) (canvas, comment)
 #   BRANDING           true | false, the PR Lens footer (default true) (comment)
 #
 # Outputs (GITHUB_OUTPUT):
 #   graph       path of the analyzed graph document  (analyze)
-#   assets_url  base URL of the published SVGs        (publish)
+#   drawing     data-flow | architecture | none       (analyze)
+#   assets_url  base URL of the published SVGs, absent when none (publish)
 #   canvas_id   id of the pushed canvas, empty on failure (canvas)
 #   canvas_url  view link of that canvas              (canvas)
-#   canvas_walkthrough  false when pushed without the walkthrough (canvas)
 #   result      posted | updated | superseded         (comment)
 
 set -euo pipefail
@@ -60,9 +64,16 @@ WORK="${RUNNER_TEMP}/pr-lens"
 CLI_DIR="${RUNNER_TEMP}/pr-lens-cli"
 GRAPH="${WORK}/graph.json"
 ASSETS="${WORK}/assets"
+# pr-lens.mjs reads these.
+export WORK ASSETS BRANDING
 
 cli() {
   "${CLI_DIR}/node_modules/.bin/pr-lens" "$@"
+}
+
+# data-flow | architecture | none, as analyze chose it.
+drawing() {
+  jq -r '.drawing' "${WORK}/choice.json"
 }
 
 check() {
@@ -88,37 +99,40 @@ check() {
 install() {
   rm -rf "${CLI_DIR}"
   mkdir -p "${CLI_DIR}"
-  cp "${ACTION_PATH}/package.json" "${ACTION_PATH}/package-lock.json" "${CLI_DIR}/"
+  # The Node files sit next to node_modules, so their imports resolve from the
+  # lockfile.
+  cp "${ACTION_PATH}/package.json" "${ACTION_PATH}/package-lock.json" \
+    "${ACTION_PATH}/pr-lens.mjs" "${ACTION_PATH}/lib.mjs" "${ACTION_PATH}/lib.test.mjs" \
+    "${ACTION_PATH}/prompt.md" "${CLI_DIR}/"
   # A dependency install script is code nobody reviewed, so none of them run.
   npm ci --prefix "${CLI_DIR}" --ignore-scripts --no-audit --no-fund --loglevel=error
   echo "installed pr-lens $(cli --version) from the lockfile"
 }
 
+# The model reads the description too: it names what the diff only shows, and
+# says which parts of the change belong together.
 analyze() {
+  export GH_TOKEN="${GITHUB_TOKEN}"
+  rm -rf "${WORK}"
   mkdir -p "${WORK}"
-  local lens_args=()
-  if [ -n "${LENS:-}" ]; then
-    lens_args=(--lens "${LENS}")
+  if ! gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '{title, body}' > "${WORK}/pull-request.json"; then
+    echo "::error title=PR Lens analyze failed::could not read #${PR_NUMBER} from GitHub - check that the job grants pull-requests: read, then re-run"
+    exit 1
   fi
-  # The CLI reads the key from the variable that --api-key-env names, so the
-  # key never appears in a command line.
-  cli analyze \
-    --base "${BASE_SHA}" \
-    --head "${HEAD_SHA}" \
-    --pr "${PR_NUMBER}" \
-    --provider openai-compatible \
-    --base-url "${PR_LENS_BASE_URL}" \
-    --model "${PR_LENS_MODEL}" \
-    --api-key-env PR_LENS_API_KEY \
-    ${lens_args[@]+"${lens_args[@]}"} \
-    --out "${GRAPH}"
+  PULL_REQUEST_FILE="${WORK}/pull-request.json" node "${CLI_DIR}/pr-lens.mjs" analyze
   echo "graph=${GRAPH}" >> "$GITHUB_OUTPUT"
+  echo "drawing=$(drawing)" >> "$GITHUB_OUTPUT"
 }
 
 # Dark only, so the comment shows one dark image to every reader. A light and
 # dark pair would follow each reader's operating system, not their GitHub
 # theme. The canvas draws its own pictures and is unaffected.
 render() {
+  rm -rf "${ASSETS}"
+  if [ "$(drawing)" = "none" ]; then
+    echo "nothing to render - the comment carries the text only"
+    return 0
+  fi
   cli render "${GRAPH}" --theme dark --out "${ASSETS}"
 }
 
@@ -126,6 +140,10 @@ render() {
 # changed diagram must arrive at a new URL. The renderer names each file after
 # the hash of its contents, and each run writes its own directory once.
 publish() {
+  if [ "$(drawing)" = "none" ]; then
+    echo "nothing to publish - the comment carries the text only"
+    return 0
+  fi
   local directory="pr/${PR_NUMBER}/${HEAD_SHA}"
   local workspace="${RUNNER_TEMP}/pr-lens-publish"
   local basic_auth
@@ -382,21 +400,6 @@ push_canvas() {
   fi
 
   status="$(put_canvas "${id}" "${rev}" "${ASSETS}/drawn.graph.json")"
-  # The app checks that every walkthrough step names something the diagrams
-  # draw. The same document is refused the same way every time, so a retry
-  # cannot fix it. Without its walkthrough, the canvas still zooms, pans, and
-  # shows every payload.
-  if [ "${status}" = "422" ] &&
-    [ "$(jq -r '.error.code // empty' "${WORK}/canvas-answer.json" 2> /dev/null)" = "CANNOT_DRAW" ] &&
-    jq -e 'has("walkthrough")' "${ASSETS}/drawn.graph.json" > /dev/null 2>&1; then
-    canvas_refusal "pushing canvas ${id}" "${status}"
-    if still_current &&
-      jq 'del(.walkthrough)' "${ASSETS}/drawn.graph.json" > "${WORK}/canvas-no-walkthrough.json"; then
-      echo "pushing canvas ${id} again without its walkthrough"
-      status="$(put_canvas "${id}" "${rev}" "${WORK}/canvas-no-walkthrough.json")"
-      [ "${status}" = "200" ] && touch "${WORK}/canvas-no-walkthrough"
-    fi
-  fi
   if [ "${status}" != "200" ]; then
     canvas_refusal "pushing canvas ${id}" "${status}"
     # A canvas minted by this run and never drawn is empty, and the comment
@@ -415,6 +418,10 @@ push_canvas() {
 # the comment come from the data branch, not from prlens.dev.
 canvas() {
   export GH_TOKEN="${GITHUB_TOKEN}"
+  if [ "$(drawing)" = "none" ]; then
+    echo "no canvas - the comment carries the text only"
+    return 0
+  fi
   local state=0
   head_state > /dev/null || state=$?
   case "${state}" in
@@ -429,7 +436,7 @@ canvas() {
       ;;
   esac
 
-  rm -f "${WORK}/canvas-id" "${WORK}/canvas-no-walkthrough"
+  rm -f "${WORK}/canvas-id"
   mkdir -p "${WORK}"
   local pushed=0
   push_canvas || pushed=$?
@@ -443,63 +450,48 @@ canvas() {
   id="$(cat "${WORK}/canvas-id")"
   echo "canvas_id=${id}" >> "$GITHUB_OUTPUT"
   echo "canvas_url=${CANVAS_APP}/c/${id}" >> "$GITHUB_OUTPUT"
-  if [ -e "${WORK}/canvas-no-walkthrough" ]; then
-    echo "canvas_walkthrough=false" >> "$GITHUB_OUTPUT"
-  else
-    echo "canvas_walkthrough=true" >> "$GITHUB_OUTPUT"
-  fi
   echo "::notice title=PR Lens canvas pushed::#${PR_NUMBER} at ${CANVAS_APP}/c/${id}"
 }
 
 comment() {
   export GH_TOKEN="${GITHUB_TOKEN}"
   local body="${WORK}/comment.md"
-  local branding_args=()
-  if [ "${BRANDING}" = "false" ]; then
-    branding_args=(--no-branding)
-  fi
 
   if overtaken; then
     return 0
   fi
 
-  cli comment \
-    --graph "${ASSETS}/drawn.graph.json" \
-    --manifest "${ASSETS}/manifest.json" \
-    --asset-base-url "${ASSETS_URL}" \
-    ${branding_args[@]+"${branding_args[@]}"} \
-    --out "${body}"
+  ASSETS_URL="${ASSETS_URL:-}" node "${CLI_DIR}/pr-lens.mjs" comment
 
+  local marker
+  marker="$(cli comment --print-marker)"
   local mine
   mine="$(own_comment)"
 
-  # The id rides in a hidden line right under the marker, which must stay the
-  # first line, and the next run's canvas step reads it there. When this run
-  # pushed no canvas, the id the comment already carries is kept without a
-  # link, so the next run retries that canvas instead of minting another. A
-  # kept id that no longer exists is replaced on that retry.
+  # The marker must stay the first line, because own_comment matches on it.
+  # The canvas id rides in a hidden line right under it, and the next run's
+  # canvas step reads it there. When this run pushed no canvas, the id the
+  # comment already carries is kept without a link, so the next run retries
+  # that canvas instead of minting another. A kept id that no longer exists
+  # is replaced on that retry.
   local canvas_url=""
   local kept_id=""
   if [ -z "${CANVAS_ID:-}" ]; then
     kept_id="$(canvas_id_in "${mine}")"
   fi
-  if [ -n "${CANVAS_ID:-}" ] || [ -n "${kept_id}" ]; then
-    {
-      head -n 1 "${body}"
+  {
+    echo "${marker}"
+    if [ -n "${CANVAS_ID:-}" ] || [ -n "${kept_id}" ]; then
       echo "<!-- ${CANVAS_MARKER} ${CANVAS_ID:-${kept_id}} -->"
-      if [ -n "${CANVAS_ID:-}" ]; then
-        canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
-        echo ""
-        local affordances="zoom and pan, click an arrow for its payload, or play the walkthrough"
-        if [ "${CANVAS_WALKTHROUGH:-true}" = "false" ]; then
-          affordances="zoom and pan, or click an arrow for its payload"
-        fi
-        echo "<p><a href=\"${canvas_url}\"><b>Open the interactive canvas</b></a> &middot; ${affordances}</p>"
-      fi
-      tail -n +2 "${body}"
-    } > "${body}.canvas"
-    mv "${body}.canvas" "${body}"
-  fi
+    fi
+    echo ""
+    if [ -n "${CANVAS_ID:-}" ]; then
+      canvas_url="${CANVAS_APP}/c/${CANVAS_ID}"
+      echo "<p><a href=\"${canvas_url}\"><b>開啟互動畫布</b></a> &middot; 可以縮放和拖曳圖表</p>"
+      echo ""
+    fi
+    cat "${WORK}/comment-body.md"
+  } > "${body}"
 
   # Checked again, because composing the body and listing the comments take
   # seconds, and this check guards the write.
@@ -529,7 +521,10 @@ comment() {
     echo "| Pull request | #${PR_NUMBER} |"
     echo "| Head | \`${HEAD_SHA}\` |"
     echo "| Comment | ${result} |"
-    echo "| Diagrams | [\`${DATA_BRANCH}\`](${ASSETS_URL}) |"
+    echo "| Drawing | $(drawing) |"
+    if [ -n "${ASSETS_URL:-}" ]; then
+      echo "| Diagrams | [\`${DATA_BRANCH}\`](${ASSETS_URL}) |"
+    fi
     echo "| Canvas | ${canvas_url:-none} |"
     echo ""
   } >> "$GITHUB_STEP_SUMMARY"

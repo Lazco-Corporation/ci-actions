@@ -482,8 +482,8 @@ jobs:
           echo "empty token correctly failed closed"
 
   # The full pr-lens action needs a pull request and an Infisical identity, so
-  # this job covers the parts that need neither: the lockfile install and the
-  # fail-closed checks.
+  # this job covers the parts that need neither: the lockfile install, the
+  # drawing choice and comment body, and the fail-closed checks.
   pr-lens:
     name: pr-lens
     runs-on: ubuntu-latest
@@ -498,6 +498,9 @@ jobs:
         env:
           ACTION_PATH: ${{ github.workspace }}/pr-lens
         run: bash pr-lens/pr-lens.sh install
+
+      - name: the drawing choice and the Chinese comment hold
+        run: node --test "${RUNNER_TEMP}/pr-lens-cli/lib.test.mjs"
 
       - name: a run with no pull request is rejected
         id: no_pr

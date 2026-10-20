@@ -1,8 +1,13 @@
-# Composite action: draw a pull request with PR Lens and comment the diagrams.
+# Composite action: describe a pull request in Traditional Chinese, draw the
+# flows it changes with the PR Lens renderer, and comment both.
 #
 # The model endpoint, model name, and key, and the PR Lens account token, come
 # from Infisical through the infisical-fetch action, so none of them lives in
 # GitHub or in this public repo.
+#
+# What the comment shows is decided from the diff, not by the model: up to two
+# flow diagrams, else one architecture diagram, else text only. A change of
+# fewer than 20 lines outside tests and docs is always text only.
 #
 # Each pull request also gets one canvas on prlens.dev, the interactive view,
 # linked from the comment. It holds the drawn graph document, not the code.
@@ -21,7 +26,7 @@
 # The reusable workflow .github/workflows/reusable-pr-lens.yml does both.
 
 name: "PR Lens"
-description: "Analyze a pull request's diff with a model from Infisical, render architecture and data-flow SVGs, publish them to a data branch, push a canvas to prlens.dev, and keep one comment up to date."
+description: "Describe a pull request in Traditional Chinese with a model from Infisical, render the flows it changes as SVGs, publish them to a data branch, push a canvas to prlens.dev, and keep one comment up to date."
 inputs:
   identity-id:
     description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
@@ -42,10 +47,6 @@ inputs:
     description: "Infisical project that holds the PR Lens config at its root: PR_LENS_BASE_URL, PR_LENS_MODEL, and PR_LENS_API_KEY."
     required: false
     default: "lazco-pr-lens-ci-shared"
-  lens:
-    description: "Comma-separated lenses (architecture, data-flow). Empty = both."
-    required: false
-    default: ""
   data-branch:
     description: "Orphan branch the SVGs are committed to. It holds no code and is never merged."
     required: false
@@ -66,11 +67,14 @@ outputs:
   graph:
     description: "Path of the analyzed graph document."
     value: ${{ steps.analyze.outputs.graph }}
+  drawing:
+    description: "data-flow | architecture | none. none = the comment carries text only."
+    value: ${{ steps.analyze.outputs.drawing }}
   assets-url:
-    description: "Base URL the SVGs are published at."
+    description: "Base URL the SVGs are published at. Empty when nothing was drawn."
     value: ${{ steps.publish.outputs.assets_url }}
   canvas-url:
-    description: "View link of the pull request's canvas. Empty when the push failed."
+    description: "View link of the pull request's canvas. Empty when nothing was drawn or the push failed."
     value: ${{ steps.canvas.outputs.canvas_url }}
   result:
     description: "posted | updated | superseded"
@@ -100,7 +104,7 @@ runs:
       with:
         node-version: "22"
 
-    - name: Install the PR Lens CLI
+    - name: Install PR Lens
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -115,7 +119,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         BASE_SHA: ${{ inputs.base-sha }}
         HEAD_SHA: ${{ inputs.head-sha }}
-        LENS: ${{ inputs.lens }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "${{ github.action_path }}/pr-lens.sh" analyze
 
     # Applies the repo's `.github/pr-lens.yml` corrections, when present.
@@ -153,7 +157,6 @@ runs:
         HEAD_SHA: ${{ inputs.head-sha }}
         ASSETS_URL: ${{ steps.publish.outputs.assets_url }}
         CANVAS_ID: ${{ steps.canvas.outputs.canvas_id }}
-        CANVAS_WALKTHROUGH: ${{ steps.canvas.outputs.canvas_walkthrough }}
         COMMENT_AUTHOR: ${{ inputs.comment-author }}
         BRANDING: ${{ inputs.branding }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
