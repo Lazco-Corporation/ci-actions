@@ -53,6 +53,10 @@ holds, and neither a branch filter nor `prod-actor-guard` catches that:
 It reads the compare API, so it needs no checkout and no git history. Put it in
 the first job the release depends on.
 
+To roll this action back, move `v1` back to the previous good commit and force-push the tag, as `Releasing a change` shows.
+Callers pin `@v1`, so the rollback reaches every caller repo at the same time.
+It also rolls back every other action changed since that commit.
+
 Requirements of calling jobs:
 
 - Jobs calling `infisical-fetch` must declare `permissions: id-token: write`
@@ -62,6 +66,8 @@ Requirements of calling jobs:
 - Jobs calling `require-tag-on-main` need `contents: read` on `GITHUB_TOKEN`.
   A job-level `permissions:` block that lists only `id-token: write` drops it,
   the compare API then answers 404, and the guard refuses every release.
+  The reverse also holds for a private repo that exists, with the default `branch` and `sha: ${{ github.sha }}`.
+  There, `GitHub answered HTTP 404` means the calling job lost `contents: read`.
 - Jobs calling `pr-lens` need `contents: write`, `pull-requests: write`, and
   `id-token: write`, and a checkout with `fetch-depth: 0`.
 - Scripts need `bash`, `curl`, `jq`, `yq`, `git`, `docker` (assert-promoted-image
