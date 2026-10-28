@@ -19,6 +19,11 @@ on:
         description: "Infisical machine-identity id bound to the calling repo (GitHub OIDC auth)."
         type: string
         required: true
+      runs-on:
+        description: "Runner label for every job. Boat refuses the jobs of a public repo, so a public caller passes ubuntu-latest."
+        type: string
+        required: false
+        default: boat-small
 
 permissions: {}
 
@@ -32,8 +37,7 @@ jobs:
       && !github.event.pull_request.draft
       && github.event.pull_request.head.repo.full_name == github.repository
       && github.actor != 'dependabot[bot]'
-    # Temporary until 2026-11-02: GitHub-hosted minutes are used up this month.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 15
     # Every run for a pull request writes the same comment, so a new push
     # cancels the run it replaces. The manual run shares this group.
@@ -57,8 +61,7 @@ jobs:
   list:
     name: List open pull requests
     if: github.event_name == 'workflow_dispatch'
-    # Temporary until 2026-11-02: GitHub-hosted minutes are used up this month.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -89,8 +92,7 @@ jobs:
     name: "PR Lens #${{ matrix.pull-request.number }}"
     needs: list
     if: needs.list.outputs.count != '0'
-    # Temporary until 2026-11-02: GitHub-hosted minutes are used up this month.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ inputs.runs-on }}
     timeout-minutes: 15
     strategy:
       fail-fast: false

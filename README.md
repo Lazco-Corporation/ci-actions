@@ -70,9 +70,10 @@ Requirements of calling jobs:
   There, `GitHub answered HTTP 404` means the calling job lost `contents: read`.
 - Jobs calling `pr-lens` need `contents: write`, `pull-requests: write`, and
   `id-token: write`, and a checkout with `fetch-depth: 0`.
-- Scripts need `bash`, `curl`, `jq`, `yq`, `git`, `docker` (assert-promoted-image
-  only), `npm` (npm-publish and pr-lens only), `gh` (pr-lens only) - all
-  preinstalled on GitHub `ubuntu-latest` and Blacksmith images.
+- Scripts need `bash`, `curl`, `jq`, `git`, `docker` (assert-promoted-image
+  only), `npm` (npm-publish and pr-lens only), `gh` (pr-lens only).
+  All are preinstalled on GitHub `ubuntu-latest` and on Boat runners.
+  `gitops-writeback` installs its own `yq`, pinned by version and checksum, because a Boat runner has none.
 
 ### npm-publish
 
@@ -156,6 +157,9 @@ jobs:
 
 Do not add a workflow-level `concurrency` block to the caller. The reusable
 workflow sets one per pull request, at the job level.
+
+Every job runs on `boat-small` by default.
+Boat refuses the jobs of a public repo, so a public caller passes `runs-on: ubuntu-latest` under `with:`.
 
 Behavior worth knowing:
 
