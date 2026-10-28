@@ -5,6 +5,9 @@
 # and pr-lens also needs a pull request. The pr-lens job covers the rest.
 #
 # Expected-failure cases use continue-on-error + an outcome assertion.
+#
+# Every job runs on a GitHub-hosted runner. This repo is public, Boat refuses
+# the jobs of a public repo, and GitHub-hosted runners are free for one.
 
 name: Self-test
 
@@ -17,7 +20,7 @@ permissions:
 jobs:
   parse-release-tag:
     name: parse-release-tag
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -88,7 +91,7 @@ jobs:
 
   prod-actor-guard:
     name: prod-actor-guard
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -126,7 +129,7 @@ jobs:
 
   assert-promoted-image:
     name: assert-promoted-image
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -151,7 +154,7 @@ jobs:
 
   verify-deployment:
     name: verify-deployment
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -210,7 +213,7 @@ jobs:
 
   gitops-writeback:
     name: gitops-writeback
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -259,7 +262,7 @@ jobs:
 
   npm-publish:
     name: npm-publish
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # provenance path is exercised in dry-run
@@ -352,7 +355,7 @@ jobs:
 
   discord-notify:
     name: discord-notify
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -404,7 +407,7 @@ jobs:
 
   require-tag-on-main:
     name: require-tag-on-main
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

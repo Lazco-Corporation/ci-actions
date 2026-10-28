@@ -46,6 +46,27 @@ runs:
         ref: ${{ inputs.target-branch }}
         path: gitops
 
+    # A runner image need not ship yq: Boat's does not. So the action brings its
+    # own, pinned by version and checksum, and every runner runs the same yq.
+    - name: Install yq
+      shell: bash
+      env:
+        YQ_VERSION: v4.54.1
+        YQ_SHA256_AMD64: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+        YQ_SHA256_ARM64: 189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) arch=amd64; sha256="$YQ_SHA256_AMD64" ;;
+          aarch64 | arm64) arch=arm64; sha256="$YQ_SHA256_ARM64" ;;
+          *) echo "::error title=GitOps write-back failed::no pinned yq for $(uname -m)"; exit 1 ;;
+        esac
+        bin_dir="${RUNNER_TEMP}/gitops-writeback-bin"
+        mkdir -p "$bin_dir"
+        curl -fsSL --retry 3 -o "$bin_dir/yq" "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}"
+        echo "${sha256}  $bin_dir/yq" | sha256sum -c -
+        chmod +x "$bin_dir/yq"
+
     - id: writeback
       shell: bash
       working-directory: gitops
@@ -57,4 +78,4 @@ runs:
         GITOPS_REPO: ${{ inputs.gitops-repo }}
         TARGET_BRANCH: ${{ inputs.target-branch }}
         OVERLAY_PATH: ${{ inputs.overlay-path }}
-      run: bash "${{ github.action_path }}/gitops-writeback.sh"
+      run: PATH="${RUNNER_TEMP}/gitops-writeback-bin:${PATH}" bash "${{ github.action_path }}/gitops-writeback.sh"
