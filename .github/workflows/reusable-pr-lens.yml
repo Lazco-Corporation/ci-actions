@@ -20,7 +20,7 @@ on:
         type: string
         required: true
       runs-on:
-        description: "Runner label for every job. Boat refuses the jobs of a public repo, so a public caller passes blacksmith-2vcpu-ubuntu-2404."
+        description: "Runner label for every job. Boat refuses the jobs of a public repo, so a public caller passes ubuntu-latest."
         type: string
         required: false
         default: boat-small
