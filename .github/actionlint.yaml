@@ -1,0 +1,4 @@
+# The runner label of this public repo's jobs, so actionlint does not report it as unknown.
+self-hosted-runner:
+  labels:
+    - blacksmith-2vcpu-ubuntu-2404

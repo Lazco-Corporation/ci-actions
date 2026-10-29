@@ -24,5 +24,6 @@ jobs:
       id-token: write # Infisical OIDC
     with:
       identity-id: "4926cec2-6183-49f1-b2b5-2e468cb2cdf6"
-      # This repo is public, and Boat refuses the jobs of a public repo.
-      runs-on: ubuntu-latest
+      # This repo is public, and Boat refuses the jobs of a public repo, so it
+      # takes the smallest Blacksmith runner.
+      runs-on: blacksmith-2vcpu-ubuntu-2404
