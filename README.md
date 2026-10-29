@@ -72,7 +72,7 @@ Requirements of calling jobs:
   `id-token: write`, and a checkout with `fetch-depth: 0`.
 - Scripts need `bash`, `curl`, `jq`, `git`, `docker` (assert-promoted-image
   only), `npm` (npm-publish and pr-lens only), `gh` (pr-lens only).
-  All are preinstalled on GitHub `ubuntu-latest` and on Boat runners.
+  All are preinstalled on GitHub `ubuntu-latest`, on Blacksmith runners and on Boat runners.
   `gitops-writeback` installs its own `yq`, pinned by version and checksum, because a Boat runner has none.
 
 ### npm-publish
@@ -159,7 +159,7 @@ Do not add a workflow-level `concurrency` block to the caller. The reusable
 workflow sets one per pull request, at the job level.
 
 Every job runs on `boat-small` by default.
-Boat refuses the jobs of a public repo, so a public caller passes `runs-on: ubuntu-latest` under `with:`.
+Boat refuses the jobs of a public repo, so a public caller passes `runs-on: blacksmith-2vcpu-ubuntu-2404` under `with:`.
 
 Behavior worth knowing:
 

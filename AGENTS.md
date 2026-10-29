@@ -104,12 +104,12 @@ Rollback is pointing `v1` at the previous commit and force-pushing.
 Scripts may use `bash`, `curl`, `jq`, and `git`. `docker` is
 `assert-promoted-image` only, `npm` and `node` are `npm-publish` and `pr-lens` only, and
 `gh` is `pr-lens` only. All are preinstalled
-on `ubuntu-latest` and on Boat runners. Adding a new dependency means every
+on `ubuntu-latest`, on Blacksmith runners and on Boat runners. Adding a new dependency means every
 consumer job must provide it, so prefer what is already there.
 A tool that a Boat runner lacks is installed by the action itself, pinned by version and checksum, as `gitops-writeback` does for `yq`.
 
 This repo is public, and Boat refuses the jobs of a public repo.
-So its own workflows run on `ubuntu-latest`, which is free for a public repo.
+So its own workflows run on the smallest Blacksmith runner, `blacksmith-2vcpu-ubuntu-2404`.
 
 Composite actions cannot declare `permissions`. When an action needs a token
 scope, the calling job must grant it, and that requirement belongs in
