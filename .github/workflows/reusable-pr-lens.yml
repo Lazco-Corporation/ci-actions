@@ -20,10 +20,10 @@ on:
         type: string
         required: true
       runs-on:
-        description: "Runner label for every job. Boat refuses the jobs of a public repo, so a public caller passes ubuntu-latest."
+        description: "Runner label for every job. A public caller passes ubuntu-24.04, which is free for a public repo."
         type: string
         required: false
-        default: boat-small
+        default: blacksmith-2vcpu-ubuntu-2404
 
 permissions: {}
 
