@@ -46,8 +46,8 @@ runs:
         ref: ${{ inputs.target-branch }}
         path: gitops
 
-    # A runner image need not ship yq: Boat's does not. So the action brings its
-    # own, pinned by version and checksum, and every runner runs the same yq.
+    # Runner images ship different yq versions, or none. So the action brings
+    # its own, pinned by version and checksum, and every runner runs the same yq.
     - name: Install yq
       shell: bash
       env:
