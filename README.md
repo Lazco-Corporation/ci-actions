@@ -72,8 +72,8 @@ Requirements of calling jobs:
   `id-token: write`, and a checkout with `fetch-depth: 0`.
 - Scripts need `bash`, `curl`, `jq`, `git`, `docker` (assert-promoted-image
   only), `npm` (npm-publish and pr-lens only), `gh` (pr-lens only).
-  All are preinstalled on GitHub's `ubuntu-24.04`, on Blacksmith runners and on Boat runners.
-  `gitops-writeback` installs its own `yq`, pinned by version and checksum, because a Boat runner has none.
+  All are preinstalled on GitHub's `ubuntu-24.04` and `ubuntu-slim`, except `docker`, whose daemon `ubuntu-slim` lacks.
+  `gitops-writeback` installs its own `yq`, pinned by version and checksum, so every runner runs the same `yq`.
 
 ### npm-publish
 
@@ -158,7 +158,7 @@ jobs:
 Do not add a workflow-level `concurrency` block to the caller. The reusable
 workflow sets one per pull request, at the job level.
 
-Every job runs on `blacksmith-2vcpu-ubuntu-2404` by default.
+Every job runs on `ubuntu-slim` by default. PR Lens stops itself after 10 minutes, inside the 15-minute job limit of `ubuntu-slim`.
 A public caller passes `runs-on: ubuntu-24.04` under `with:`, which is free for a public repo.
 
 Behavior worth knowing:

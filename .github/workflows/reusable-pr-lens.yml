@@ -23,7 +23,7 @@ on:
         description: "Runner label for every job. A public caller passes ubuntu-24.04, which is free for a public repo."
         type: string
         required: false
-        default: blacksmith-2vcpu-ubuntu-2404
+        default: ubuntu-slim
 
 permissions: {}
 

@@ -104,9 +104,9 @@ Rollback is pointing `v1` at the previous commit and force-pushing.
 Scripts may use `bash`, `curl`, `jq`, and `git`. `docker` is
 `assert-promoted-image` only, `npm` and `node` are `npm-publish` and `pr-lens` only, and
 `gh` is `pr-lens` only. All are preinstalled
-on `ubuntu-24.04`, on Blacksmith runners and on Boat runners. Adding a new dependency means every
+on `ubuntu-24.04` and `ubuntu-slim`, except the Docker daemon, which `ubuntu-slim` lacks. Adding a new dependency means every
 consumer job must provide it, so prefer what is already there.
-A tool that a Boat runner lacks is installed by the action itself, pinned by version and checksum, as `gitops-writeback` does for `yq`.
+A tool whose version matters is installed by the action itself, pinned by version and checksum, as `gitops-writeback` does for `yq`.
 
 This repo is public, so its own workflows run on `ubuntu-24.04`, which is free for a public repo.
 Never use a moving label such as `ubuntu-latest`.
